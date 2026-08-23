@@ -1,0 +1,73 @@
+// ---------------------------------------------------------------------------
+// Replenishment parameters and their history.
+//
+// This file is the reason section 3.4 of the brief is satisfied: every number
+// the logistics team might want to tune is a row here, never a constant in
+// TypeScript. Changing the safety margin for class A is a form submission, not
+// a redeployment.
+// ---------------------------------------------------------------------------
+
+/// Tuning parameters, scoped either to an ABC class or to a single article.
+///
+/// Exactly one of `abcClass` / `articleId` is set. An article-level row
+/// overrides its class defaults, which is how a single critical reference can
+/// be treated more conservatively than the rest of its class.
+model ReplenishmentParameter {
+  id String @id @default(cuid())
+
+  /// Set for a class-level default. Null on an article override.
+  abcClass AbcClass? @unique
+
+  /// Set for an article-level override. Null on a class default.
+  articleId String?  @unique
+  article   Article? @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  /// Margin against consumption variability, in days of consumption.
+  /// Defaults per class (section 3.4): A = 2, B = 1.5, C = 1.
+  safetyDays        Decimal @default(1) @db.Decimal(6, 2)
+
+  /// Coverage restored on top of the minimum.
+  /// Defaults per class (section 3.4): A = 3, B = 5, C = 10.
+  extraCoverageDays Decimal @default(5) @db.Decimal(6, 2)
+
+  /// Window for the rolling consumption average: 7, 30 or 90 days.
+  averagingWindowDays Int @default(30)
+
+  /// How far above Min the early warning fires, as a fraction of Min.
+  warningMarginRatio Decimal @default(0.2) @db.Decimal(4, 3)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("replenishment_parameter")
+}
+
+/// One row per recomputation, per stock item.
+///
+/// Section 3.5 requires that a threshold change can be explained afterwards.
+/// The parameters in force at the time are snapshotted as JSON rather than
+/// referenced, because the parameter row they came from will itself change: a
+/// foreign key would make the history lie the moment someone edits a default.
+model ThresholdHistory {
+  id String @id @default(cuid())
+
+  stockItemId String
+  stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+
+  averageDailyConsumption Decimal @db.Decimal(12, 3)
+  minThreshold            Decimal @db.Decimal(12, 3)
+  maxThreshold            Decimal @db.Decimal(12, 3)
+  safetyStock             Decimal @db.Decimal(12, 3)
+
+  /// The exact inputs used, frozen at computation time.
+  parametersSnapshot Json
+
+  trigger    RecalculationTrigger
+  computedAt DateTime             @default(now())
+
+  /// Null for the nightly job.
+  computedById String?
+
+  @@index([stockItemId, computedAt])
+  @@map("threshold_history")
+}

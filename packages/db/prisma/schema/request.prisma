@@ -1,0 +1,167 @@
+// ---------------------------------------------------------------------------
+// Replenishment requests — the workflow this project exists to make visible.
+// ---------------------------------------------------------------------------
+
+/// A demand from LTN1 to LTN4, carrying one line per article.
+model ReplenishmentRequest {
+  id String @id @default(cuid())
+
+  /// Human-readable reference shown on screen and in exports, e.g. DR-2026-0042.
+  code String @unique
+
+  status   RequestStatus   @default(DRAFT)
+  priority RequestPriority @default(NORMAL)
+
+  /// Supplying plant (LTN4) and consuming plant (LTN1). Stored rather than
+  /// assumed, so a third site can be added without a data migration.
+  fromSiteId String
+  fromSite   Site   @relation("RequestFromSite", fields: [fromSiteId], references: [id])
+  toSiteId   String
+  toSite     Site   @relation("RequestToSite", fields: [toSiteId], references: [id])
+
+  createdById String
+  createdBy   User   @relation("RequestCreatedBy", fields: [createdById], references: [id])
+
+  approvedById String?
+  approvedBy   User?   @relation("RequestApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  /// Milestone timestamps. Each is written by the transition that reaches it,
+  /// which is what makes real lead time measurable against the theoretical one.
+  submittedAt DateTime?
+  approvedAt  DateTime?
+  sentAt      DateTime?
+  preparedAt  DateTime?
+  shippedAt   DateTime?
+  receivedAt  DateTime?
+  closedAt    DateTime?
+
+  /// The delivery date committed by LTN4. Lateness is derived from this column
+  /// rather than stored as a status, so a late request keeps showing where it
+  /// actually is in the process.
+  expectedDeliveryAt DateTime?
+
+  /// Populated on rejection or cancellation; mandatory for those transitions.
+  reason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines         ReplenishmentRequestLine[]
+  statusHistory RequestStatusHistory[]
+  comments      RequestComment[]
+  attachments   RequestAttachment[]
+
+  @@index([status])
+  @@index([toSiteId, status])
+  @@index([fromSiteId, status])
+  @@index([createdAt])
+  @@map("replenishment_request")
+}
+
+/// One article on a request.
+///
+/// The five quantity columns are the whole point: they record what was asked
+/// for, what was authorised, what was picked, what left LTN4 and what arrived
+/// at LTN1. Collapsing them into a single quantity column would make partial
+/// shipment and partial receipt — both required by section 5 — unrepresentable,
+/// and would destroy the data every service-level KPI is computed from.
+model ReplenishmentRequestLine {
+  id String @id @default(cuid())
+
+  requestId String
+  request   ReplenishmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  articleId String
+  article   Article @relation(fields: [articleId], references: [id])
+
+  requestedQuantity Int
+  approvedQuantity  Int?
+  preparedQuantity  Int?
+  shippedQuantity   Int?
+  receivedQuantity  Int?
+
+  /// Pack size at the time of the request. Snapshotted because the article
+  /// master may be re-imported with a different VPE, and a closed request must
+  /// still make arithmetic sense years later.
+  vpeSnapshot Int
+
+  /// What the domain proposed, kept alongside what the human actually asked
+  /// for. The gap between the two measures whether the suggestion is trusted.
+  suggestedQuantity Int?
+
+  note String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([requestId, articleId])
+  @@index([articleId])
+  @@map("replenishment_request_line")
+}
+
+/// The audit trail of the workflow: who moved what, when, and why.
+/// Written in the same transaction as the status change, never optionally.
+model RequestStatusHistory {
+  id String @id @default(cuid())
+
+  requestId String
+  request   ReplenishmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  /// Null on the row that records creation.
+  fromStatus RequestStatus?
+  toStatus   RequestStatus
+
+  /// Stable action identifier from the domain transition table.
+  action String
+
+  /// Mandatory for rejection, cancellation and declared shortages.
+  reason String?
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  occurredAt DateTime @default(now())
+
+  @@index([requestId, occurredAt])
+  @@map("request_status_history")
+}
+
+/// Discussion thread, so the conversation that used to live in mailboxes stays
+/// attached to the request it is about.
+model RequestComment {
+  id      String @id @default(cuid())
+  content String
+
+  requestId String
+  request   ReplenishmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([requestId, createdAt])
+  @@map("request_comment")
+}
+
+/// Delivery notes, photographs of damaged packaging, picking sheets.
+model RequestAttachment {
+  id          String @id @default(cuid())
+  fileName    String
+  /// Path on the LEONI host; no external object storage (brief section 6.2).
+  storagePath String
+  mimeType    String
+  sizeBytes   Int
+
+  requestId String
+  request   ReplenishmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  uploadedById String
+  uploadedBy   User   @relation(fields: [uploadedById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([requestId])
+  @@map("request_attachment")
+}

@@ -1,0 +1,107 @@
+// Generator and datasource. The connection URL lives in prisma.config.ts so it
+// is never committed inside a schema file.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enumerations
+//
+// These mirror the union types in @leoni/core exactly. The domain package owns
+// the meaning; this file owns the storage. A test in @leoni/api asserts the two
+// lists stay identical, so a value added here without a matching change in the
+// domain fails the build rather than surfacing as a runtime surprise.
+// ---------------------------------------------------------------------------
+
+/// The five actors of the process (brief section 4).
+enum Role {
+  ADMIN
+  LTN1_STOREKEEPER
+  LTN1_WAREHOUSE_MANAGER
+  LTN4_RESPONSIBLE
+  LOGISTICS_MANAGER
+}
+
+/// LTN1 consumes, LTN4 supplies. The direction of every transfer follows.
+enum SiteType {
+  CONSUMING
+  SUPPLYING
+}
+
+/// ABC classification (brief section 2).
+enum AbcClass {
+  A
+  B
+  C
+}
+
+/// Every way stock can change. Each one writes a StockMovement row.
+enum MovementType {
+  ENTRY
+  EXIT
+  ADJUSTMENT
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+/// Request lifecycle (brief section 5). "LATE" is deliberately absent:
+/// lateness is derived from expectedDeliveryAt, not stored as a state.
+enum RequestStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SENT_TO_LTN4
+  IN_PREPARATION
+  PARTIALLY_AVAILABLE
+  LTN4_STOCK_OUT
+  READY
+  SHIPPED
+  IN_TRANSIT
+  RECEIVED
+  CLOSED
+  REJECTED
+  CANCELLED
+}
+
+/// Computed stock severity (brief section 6.1).
+enum AlertLevel {
+  NORMAL
+  WARNING
+  CRITICAL
+  RUPTURE
+}
+
+/// Urgency declared by the requester.
+enum RequestPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+/// What caused a threshold recomputation, so a change can be explained later.
+enum RecalculationTrigger {
+  SCHEDULED
+  MANUAL
+  IMPORT
+  PARAMETER_CHANGE
+}
+
+/// Events the notification centre can raise.
+enum NotificationType {
+  STOCK_CRITICAL
+  STOCK_RUPTURE
+  REQUEST_CREATED
+  REQUEST_APPROVED
+  REQUEST_REJECTED
+  REQUEST_SHIPPED
+  REQUEST_RECEIVED
+  REQUEST_LATE
+  LTN4_STOCK_OUT
+}

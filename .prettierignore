@@ -1,0 +1,9 @@
+# Generated or vendored — never hand-formatted.
+**/node_modules/
+**/.next/
+**/.turbo/
+**/dist/
+**/coverage/
+packages/db/src/generated/
+packages/db/prisma/migrations/
+pnpm-lock.yaml

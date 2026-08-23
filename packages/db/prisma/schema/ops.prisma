@@ -1,0 +1,87 @@
+// ---------------------------------------------------------------------------
+// Cross-cutting concerns: notifications, audit, and the KPI history.
+// ---------------------------------------------------------------------------
+
+/// In-app notification centre (brief section 6.1).
+///
+/// The payload is JSON rather than a set of nullable foreign keys because the
+/// notification types carry genuinely different data — a critical-stock alert
+/// names an article, a rejection names a request and a reason — and modelling
+/// that as one wide table of mostly-null columns would be worse than storing
+/// the shape each type actually needs.
+model Notification {
+  id      String           @id @default(cuid())
+  type    NotificationType
+  title   String
+  body    String?
+  payload Json
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@index([createdAt])
+  @@map("notification")
+}
+
+/// Generic audit log for everything outside the request workflow: master data
+/// edits, parameter changes, user administration.
+///
+/// The request workflow has its own richer trail in RequestStatusHistory; this
+/// table answers the different question of who changed a threshold or a role.
+model AuditLog {
+  id String @id @default(cuid())
+
+  /// Model name, e.g. "Article", "ReplenishmentParameter".
+  entity   String
+  entityId String
+  /// "CREATE", "UPDATE", "DELETE", or a named business action.
+  action   String
+
+  /// Null on create, and null on delete respectively. Storing both sides means
+  /// a change can be explained without replaying the whole log.
+  before Json?
+  after  Json?
+
+  /// Null when the change came from the nightly job or an import.
+  actorId String?
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  occurredAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([occurredAt])
+  @@map("audit_log")
+}
+
+/// A daily photograph of each stock item, taken by the scheduled job.
+///
+/// Alert levels are computed on read from the current stock and thresholds, so
+/// this table is not what the alert board renders. It exists for a different
+/// purpose: the KPIs in section 6.5 — stock-out rate, service level, evolution
+/// of articles at risk — are questions about the past, and the past cannot be
+/// recomputed from a table that only ever holds the present.
+model StockAlertSnapshot {
+  id String @id @default(cuid())
+
+  stockItemId String
+  stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+
+  level        AlertLevel
+  currentStock Int
+  minThreshold Decimal    @db.Decimal(12, 3)
+  /// Null when the article has no measured consumption.
+  coverageDays Decimal?   @db.Decimal(8, 1)
+
+  /// Date, not timestamp: one snapshot per stock item per day.
+  snapshotDate DateTime @db.Date
+
+  createdAt DateTime @default(now())
+
+  @@unique([stockItemId, snapshotDate])
+  @@index([snapshotDate, level])
+  @@map("stock_alert_snapshot")
+}

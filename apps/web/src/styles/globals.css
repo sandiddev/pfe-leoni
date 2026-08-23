@@ -1,0 +1,15 @@
+/**
+ * The application stylesheet.
+ *
+ * All tokens and base styles live in the design system; this file only points
+ * Tailwind at the sources it must scan. Defining a colour here rather than in
+ * @leoni/ui would create a second place styling decisions are made, which is
+ * exactly what the design system exists to prevent.
+ */
+@import "@leoni/ui/styles.css";
+
+/* Tailwind v4 discovers classes by scanning files. The design system lives
+   outside this app's folder, so its components have to be declared explicitly
+   or their classes would be stripped from the production build. */
+@source "../../src";
+@source "../../../../packages/ui/src";

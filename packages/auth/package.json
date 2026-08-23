@@ -1,0 +1,30 @@
+{
+  "name": "@leoni/auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server.ts",
+    "./client": "./src/client.ts",
+    "./next": "./src/next.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf .turbo node_modules *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@leoni/core": "workspace:*",
+    "@leoni/db": "workspace:*",
+    "@leoni/env": "workspace:*",
+    "better-auth": "catalog:"
+  },
+  "devDependencies": {
+    "@leoni/eslint-config": "workspace:*",
+    "@leoni/tsconfig": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:"
+  }
+}

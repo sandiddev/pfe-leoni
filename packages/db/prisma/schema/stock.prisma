@@ -1,0 +1,120 @@
+// ---------------------------------------------------------------------------
+// Stock and movements.
+//
+// Numeric convention, applied throughout: physical quantities are Int (units),
+// while rates and computed thresholds are Decimal(12,3). Repositories convert
+// Decimal to number in their mapper, so @leoni/core only ever sees `number`.
+// ---------------------------------------------------------------------------
+
+/// One article at one plant: the row every alert and every threshold is about.
+model StockItem {
+  id String @id @default(cuid())
+
+  articleId String
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  siteId String
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  /// Sum of the lots. Denormalised on purpose: the alert board reads this
+  /// column for every article on every page load, and recomputing it from the
+  /// movement journal each time would not survive a catalogue of any size.
+  /// Kept correct by writing it in the same transaction as the movement.
+  currentStock Int @default(0)
+
+  // --- Computed by the domain layer, stored so screens can sort and filter ---
+  /// Rolling mean consumption per day (brief section 2).
+  averageDailyConsumption Decimal @default(0) @db.Decimal(12, 3)
+  /// Reorder point (brief section 3.2).
+  minThreshold            Decimal @default(0) @db.Decimal(12, 3)
+  /// Target level after replenishment (brief section 3.2).
+  maxThreshold            Decimal @default(0) @db.Decimal(12, 3)
+  safetyStock             Decimal @default(0) @db.Decimal(12, 3)
+
+  /// The alert level implied by `currentStock` against `minThreshold`.
+  ///
+  /// Derived data, deliberately persisted. The level is a function of two
+  /// columns and a ratio, and Postgres cannot be asked through Prisma to
+  /// compare `currentStock <= minThreshold * 1.2` in a WHERE clause. Storing it
+  /// is what makes the alert board filterable and sortable by severity with an
+  /// index rather than by loading the whole catalogue into memory.
+  ///
+  /// Always written by the domain layer (`resolveAlertLevel`), in the same
+  /// transaction as the stock or threshold change that caused it, so it cannot
+  /// disagree with the columns it summarises.
+  alertLevel AlertLevel @default(NORMAL)
+
+  lastRecalculatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lots              StockLot[]
+  movements         StockMovement[]
+  thresholdHistory  ThresholdHistory[]
+  alertSnapshots    StockAlertSnapshot[]
+
+  @@unique([articleId, siteId])
+  @@index([siteId])
+  @@index([articleId])
+  @@index([siteId, alertLevel])
+  @@map("stock_item")
+}
+
+/// A quantity of one article sitting in one location, with its entry date.
+/// FIFO picking suggestions order by `fifoDate` (brief section 5).
+model StockLot {
+  id       String @id @default(cuid())
+  quantity Int
+
+  /// Entry date used for First-In-First-Out picking.
+  fifoDate DateTime
+
+  stockItemId String
+  stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+
+  storageLocationId String
+  storageLocation   StorageLocation @relation(fields: [storageLocationId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  movements StockMovement[]
+
+  @@index([stockItemId, fifoDate])
+  @@index([storageLocationId])
+  @@map("stock_lot")
+}
+
+/// The immutable journal. Every change to `StockItem.currentStock` writes one
+/// of these in the same transaction, which is what makes the stock explainable
+/// and the consumption average computable.
+model StockMovement {
+  id       String       @id @default(cuid())
+  type     MovementType
+  /// Always positive; the type carries the direction.
+  quantity Int
+
+  /// When the material physically moved, which is not always when it was keyed in.
+  occurredAt DateTime @default(now())
+
+  /// Free reference: delivery note, request code, inventory sheet.
+  reference String?
+  note      String?
+
+  stockItemId String
+  stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+
+  lotId String?
+  lot   StockLot? @relation(fields: [lotId], references: [id], onDelete: SetNull)
+
+  /// Null when written by the nightly job rather than by a person.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([stockItemId, occurredAt])
+  @@index([type])
+  @@map("stock_movement")
+}

@@ -1,0 +1,278 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   LEONI replenishment — design tokens
+   ==========================================================================
+
+   Two layers, and the distinction is the whole point of the file:
+
+   1. PRIMITIVES  (--leoni-blue-600, --gray-200 ...)
+      Raw values. Never used directly in a component.
+
+   2. SEMANTIC    (--color-primary, --color-status-critical ...)
+      Named by ROLE, not by appearance. Components use only these.
+
+   A component that says `bg-status-critical` keeps meaning the right thing when
+   the palette changes; one that says `bg-red-600` has to be found and edited.
+   That is why raw hex values and Tailwind arbitrary values are a lint error in
+   this repository (see packages/tooling/eslint-config/react.js).
+
+   NOTE ON BRAND COLOUR: --leoni-blue-600 below is a placeholder approximating
+   LEONI corporate blue. Replace the ramp with the exact values from the brand
+   guidelines; nothing else in the codebase needs to change.
+   ========================================================================== */
+
+@theme {
+  /* --- Primitive: LEONI corporate blue ---------------------------------- */
+  --color-leoni-blue-50: oklch(0.97 0.015 250);
+  --color-leoni-blue-100: oklch(0.93 0.035 250);
+  --color-leoni-blue-200: oklch(0.87 0.065 250);
+  --color-leoni-blue-300: oklch(0.78 0.1 250);
+  --color-leoni-blue-400: oklch(0.68 0.135 250);
+  --color-leoni-blue-500: oklch(0.58 0.155 250);
+  --color-leoni-blue-600: oklch(0.48 0.15 250); /* ~ #0056A4 */
+  --color-leoni-blue-700: oklch(0.4 0.13 250);
+  --color-leoni-blue-800: oklch(0.32 0.1 250);
+  --color-leoni-blue-900: oklch(0.25 0.075 250);
+
+  /* --- Primitive: neutrals ---------------------------------------------- */
+  --color-gray-50: oklch(0.985 0.002 250);
+  --color-gray-100: oklch(0.96 0.003 250);
+  --color-gray-200: oklch(0.92 0.004 250);
+  --color-gray-300: oklch(0.86 0.005 250);
+  --color-gray-400: oklch(0.7 0.008 250);
+  --color-gray-500: oklch(0.57 0.01 250);
+  --color-gray-600: oklch(0.46 0.01 250);
+  --color-gray-700: oklch(0.37 0.009 250);
+  --color-gray-800: oklch(0.27 0.008 250);
+  --color-gray-900: oklch(0.19 0.007 250);
+  --color-gray-950: oklch(0.13 0.006 250);
+
+  /* --- Primitive: signal colours ---------------------------------------- */
+  --color-green-100: oklch(0.94 0.05 150);
+  --color-green-600: oklch(0.55 0.14 150);
+  --color-green-700: oklch(0.47 0.13 150);
+
+  --color-amber-100: oklch(0.95 0.06 85);
+  --color-amber-500: oklch(0.75 0.15 75);
+  --color-amber-600: oklch(0.68 0.16 65);
+  --color-amber-700: oklch(0.57 0.15 60);
+
+  --color-orange-100: oklch(0.94 0.06 45);
+  --color-orange-600: oklch(0.62 0.18 40);
+  --color-orange-700: oklch(0.53 0.17 38);
+
+  --color-red-100: oklch(0.94 0.045 25);
+  --color-red-600: oklch(0.55 0.21 25);
+  --color-red-700: oklch(0.47 0.19 25);
+
+  /* --- Typography -------------------------------------------------------- */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Tabular figures matter here: stock quantities are read in columns, and
+     proportional digits make a column of numbers impossible to scan. */
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* --- Elevation ---------------------------------------------------------
+     Declared here rather than on :root so Tailwind generates `shadow-card` and
+     `shadow-raised` utilities. A shadow defined only as a custom property would
+     have to be reached with an arbitrary value, which the design-system lint
+     rule forbids — correctly. */
+  --shadow-card: 0 1px 2px 0 oklch(0 0 0 / 0.05);
+  --shadow-raised: 0 4px 12px -2px oklch(0 0 0 / 0.08);
+
+  /* --- Radii ------------------------------------------------------------- */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+}
+
+/* ==========================================================================
+   Semantic tokens — light theme (the default; a warehouse desktop is bright)
+   ========================================================================== */
+
+:root {
+  --color-background: var(--color-gray-50);
+  --color-surface: white;
+  --color-surface-raised: white;
+  --color-surface-sunken: var(--color-gray-100);
+
+  --color-foreground: var(--color-gray-900);
+  --color-foreground-muted: var(--color-gray-600);
+  --color-foreground-subtle: var(--color-gray-500);
+  --color-foreground-on-primary: white;
+
+  --color-border: var(--color-gray-200);
+  --color-border-strong: var(--color-gray-300);
+
+  --color-primary: var(--color-leoni-blue-600);
+  --color-primary-hover: var(--color-leoni-blue-700);
+  --color-primary-subtle: var(--color-leoni-blue-50);
+  --color-primary-border: var(--color-leoni-blue-200);
+
+  --color-ring: var(--color-leoni-blue-500);
+
+  --color-destructive: var(--color-red-600);
+  --color-destructive-hover: var(--color-red-700);
+  --color-destructive-subtle: var(--color-red-100);
+
+  --color-success: var(--color-green-600);
+  --color-success-subtle: var(--color-green-100);
+
+  /* --- Domain status tokens ---------------------------------------------
+     The four stock alert levels are part of the design system, not a decision
+     each screen makes for itself. The alert board, the article detail, the
+     dashboard and the PDF export must all render "Critique" the same colour;
+     three inline choices drift, one token does not. */
+  --color-status-normal: var(--color-green-600);
+  --color-status-normal-subtle: var(--color-green-100);
+  --color-status-warning: var(--color-amber-600);
+  --color-status-warning-subtle: var(--color-amber-100);
+  --color-status-critical: var(--color-orange-600);
+  --color-status-critical-subtle: var(--color-orange-100);
+  --color-status-rupture: var(--color-red-600);
+  --color-status-rupture-subtle: var(--color-red-100);
+
+  /* --- Request workflow tokens ------------------------------------------
+     Grouped by phase rather than one colour per status: fourteen distinct
+     colours would be noise, and what a reader needs at a glance is "is this
+     waiting on us, moving, done, or stopped". */
+  --color-phase-draft: var(--color-gray-500);
+  --color-phase-pending: var(--color-amber-600);
+  --color-phase-active: var(--color-leoni-blue-600);
+  --color-phase-done: var(--color-green-600);
+  --color-phase-stopped: var(--color-red-600);
+}
+
+/* ==========================================================================
+   Semantic tokens — dark theme
+   Only the semantic layer is redefined; the primitives are untouched.
+   ========================================================================== */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-background: var(--color-gray-950);
+    --color-surface: var(--color-gray-900);
+    --color-surface-raised: var(--color-gray-800);
+    --color-surface-sunken: var(--color-gray-950);
+
+    --color-foreground: var(--color-gray-100);
+    --color-foreground-muted: var(--color-gray-400);
+    --color-foreground-subtle: var(--color-gray-500);
+
+    --color-border: var(--color-gray-800);
+    --color-border-strong: var(--color-gray-700);
+
+    --color-primary: var(--color-leoni-blue-400);
+    --color-primary-hover: var(--color-leoni-blue-300);
+    --color-primary-subtle: var(--color-leoni-blue-900);
+    --color-primary-border: var(--color-leoni-blue-800);
+
+    --color-primary-subtle: oklch(0.25 0.075 250);
+    --color-status-normal-subtle: oklch(0.28 0.05 150);
+    --color-status-warning-subtle: oklch(0.3 0.06 75);
+    --color-status-critical-subtle: oklch(0.3 0.07 45);
+    --color-status-rupture-subtle: oklch(0.3 0.07 25);
+    --color-destructive-subtle: oklch(0.3 0.07 25);
+    --color-success-subtle: oklch(0.28 0.05 150);
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-background: var(--color-gray-950);
+  --color-surface: var(--color-gray-900);
+  --color-surface-raised: var(--color-gray-800);
+  --color-surface-sunken: var(--color-gray-950);
+
+  --color-foreground: var(--color-gray-100);
+  --color-foreground-muted: var(--color-gray-400);
+  --color-foreground-subtle: var(--color-gray-500);
+
+  --color-border: var(--color-gray-800);
+  --color-border-strong: var(--color-gray-700);
+
+  --color-primary: var(--color-leoni-blue-400);
+  --color-primary-hover: var(--color-leoni-blue-300);
+  --color-primary-subtle: oklch(0.25 0.075 250);
+  --color-primary-border: var(--color-leoni-blue-800);
+
+  --color-status-normal-subtle: oklch(0.28 0.05 150);
+  --color-status-warning-subtle: oklch(0.3 0.06 75);
+  --color-status-critical-subtle: oklch(0.3 0.07 45);
+  --color-status-rupture-subtle: oklch(0.3 0.07 25);
+  --color-destructive-subtle: oklch(0.3 0.07 25);
+  --color-success-subtle: oklch(0.28 0.05 150);
+}
+
+/* Expose the semantic tokens to Tailwind so `bg-surface`, `text-foreground-muted`
+   and `bg-status-critical` exist as utilities. */
+@theme inline {
+  --color-background: var(--color-background);
+  --color-surface: var(--color-surface);
+  --color-surface-raised: var(--color-surface-raised);
+  --color-surface-sunken: var(--color-surface-sunken);
+  --color-foreground: var(--color-foreground);
+  --color-foreground-muted: var(--color-foreground-muted);
+  --color-foreground-subtle: var(--color-foreground-subtle);
+  --color-foreground-on-primary: var(--color-foreground-on-primary);
+  --color-border: var(--color-border);
+  --color-border-strong: var(--color-border-strong);
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-primary-subtle: var(--color-primary-subtle);
+  --color-primary-border: var(--color-primary-border);
+  --color-ring: var(--color-ring);
+  --color-destructive: var(--color-destructive);
+  --color-destructive-hover: var(--color-destructive-hover);
+  --color-destructive-subtle: var(--color-destructive-subtle);
+  --color-success: var(--color-success);
+  --color-success-subtle: var(--color-success-subtle);
+  --color-status-normal: var(--color-status-normal);
+  --color-status-normal-subtle: var(--color-status-normal-subtle);
+  --color-status-warning: var(--color-status-warning);
+  --color-status-warning-subtle: var(--color-status-warning-subtle);
+  --color-status-critical: var(--color-status-critical);
+  --color-status-critical-subtle: var(--color-status-critical-subtle);
+  --color-status-rupture: var(--color-status-rupture);
+  --color-status-rupture-subtle: var(--color-status-rupture-subtle);
+  --color-phase-draft: var(--color-phase-draft);
+  --color-phase-pending: var(--color-phase-pending);
+  --color-phase-active: var(--color-phase-active);
+  --color-phase-done: var(--color-phase-done);
+  --color-phase-stopped: var(--color-phase-stopped);
+}
+
+/* ==========================================================================
+   Base layer
+   ========================================================================== */
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    /* French is the interface language (brief section 6.2). */
+    lang: fr;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Quantities are read in columns. Lining, tabular figures keep the digits
+     aligned so a storekeeper can compare stock levels down a table. */
+  .tabular {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  /* A visible focus ring is not optional: parts of this application are used
+     with a barcode scanner and a keyboard rather than a mouse. */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+}

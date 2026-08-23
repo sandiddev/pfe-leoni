@@ -1,0 +1,92 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "packages/tooling/*"
+
+# Single source of truth for every third-party version in the monorepo.
+# Packages reference these with the `catalog:` protocol, never a literal range,
+# so a dependency can only ever be upgraded in one place.
+catalog:
+  # --- Language & build ---------------------------------------------------
+  typescript: 6.0.3 # capped <6.1 by typescript-eslint 8.x (TS 7 not yet supported)
+  turbo: 2.10.11
+  tsx: 4.23.12
+  dotenv-cli: 11.0.0
+  dotenv: 17.4.2
+
+  # --- Framework ----------------------------------------------------------
+  next: 16.3.2
+  react: 19.2.8
+  react-dom: 19.2.8
+  "@types/react": 19.2.18
+  "@types/react-dom": 19.2.4
+  "@types/node": 24.13.3
+
+  # --- API layer ----------------------------------------------------------
+  "@trpc/server": 11.18.0
+  "@trpc/client": 11.18.0
+  "@trpc/tanstack-react-query": 11.18.0
+  "@tanstack/react-query": 5.101.4
+  "@tanstack/react-query-devtools": 5.101.4
+  superjson: 2.2.6
+  zod: 4.4.3
+
+  # --- Persistence & auth -------------------------------------------------
+  prisma: 7.9.1
+  "@prisma/client": 7.9.1
+  "@prisma/adapter-pg": 7.9.1
+  better-auth: 1.7.1
+  "@t3-oss/env-nextjs": 0.13.11
+
+  # --- Design system ------------------------------------------------------
+  tailwindcss: 4.3.3
+  "@tailwindcss/postcss": 4.3.3
+  radix-ui: 1.6.7
+  lucide-react: 1.33.0
+  class-variance-authority: 0.7.1
+  clsx: 2.1.1
+  tailwind-merge: 3.6.0
+  sonner: 2.0.8
+  next-themes: 0.4.6
+  "@tanstack/react-table": 9.1.2
+  react-hook-form: 7.86.0
+  "@hookform/resolvers": 5.9.1
+  date-fns: 4.4.0
+
+  # --- Quality ------------------------------------------------------------
+  eslint: 10.9.0
+  "@eslint/js": 10.0.1
+  "@next/eslint-plugin-next": 16.3.2
+  typescript-eslint: 8.67.0
+  eslint-config-next: 16.3.2
+  eslint-plugin-import-x: 4.17.1
+  eslint-plugin-perfectionist: 5.10.1
+  eslint-plugin-react-hooks: 7.1.1
+  "@tanstack/eslint-plugin-query": 5.101.4
+  prettier: 3.9.6
+  prettier-plugin-tailwindcss: 0.8.1
+  vitest: 4.1.11
+  "@vitest/coverage-v8": 4.1.11
+  "@playwright/test": 1.62.1
+  vite-tsconfig-paths: 6.1.1
+
+  # --- Utilities ----------------------------------------------------------
+  papaparse: 5.6.0
+  "@types/papaparse": 5.5.2
+
+# Native post-install scripts are denied by default. Every entry below is an
+# explicit, reviewed decision; keep this list as short as possible.
+allowBuilds:
+  # Native module resolver used by eslint-plugin-import-x. Without it the
+  # plugin falls back to a slower JS resolver and import rules become
+  # unreliable across workspace package boundaries.
+  unrs-resolver: true
+
+  # Prisma downloads its query-engine binaries in a postinstall step. Without
+  # them the client cannot connect to Postgres at all.
+  prisma: true
+  "@prisma/engines": true
+
+  # esbuild fetches its platform-native binary; it is what tsx uses to run the
+  # seed script and the TypeScript Prisma config.
+  esbuild: true

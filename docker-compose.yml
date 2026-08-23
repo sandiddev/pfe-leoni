@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: leoni-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: leoni
+      POSTGRES_PASSWORD: leoni
+      POSTGRES_DB: leoni_replenishment
+      # Deterministic collation so ORDER BY on French labels is stable
+      # across the dev machines and the LEONI host.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - leoni-pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leoni -d leoni_replenishment"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  adminer:
+    image: adminer:5
+    container_name: leoni-adminer
+    restart: unless-stopped
+    ports:
+      # 8080 is already taken on the development machine; 8100 is outside the
+      # Windows excluded port ranges on this host.
+      - "8100:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: dracula
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  leoni-pgdata:
+    name: leoni-pgdata

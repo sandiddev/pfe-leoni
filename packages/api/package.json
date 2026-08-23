@@ -1,0 +1,34 @@
+{
+  "name": "@leoni/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf .turbo node_modules *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@leoni/auth": "workspace:*",
+    "@leoni/contracts": "workspace:*",
+    "@leoni/core": "workspace:*",
+    "@leoni/db": "workspace:*",
+    "@leoni/env": "workspace:*",
+    "@trpc/server": "catalog:",
+    "superjson": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@leoni/eslint-config": "workspace:*",
+    "@leoni/tsconfig": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

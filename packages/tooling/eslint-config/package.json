@@ -1,0 +1,27 @@
+{
+  "name": "@leoni/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./base": "./base.js",
+    "./library": "./library.js",
+    "./domain": "./domain.js",
+    "./api": "./api.js",
+    "./react": "./react.js",
+    "./next": "./next.js"
+  },
+  "dependencies": {
+    "@eslint/js": "catalog:",
+    "@next/eslint-plugin-next": "catalog:",
+    "@tanstack/eslint-plugin-query": "catalog:",
+    "eslint-plugin-import-x": "catalog:",
+    "eslint-plugin-perfectionist": "catalog:",
+    "eslint-plugin-react-hooks": "catalog:",
+    "typescript-eslint": "catalog:"
+  },
+  "peerDependencies": {
+    "eslint": "catalog:",
+    "typescript": "catalog:"
+  }
+}

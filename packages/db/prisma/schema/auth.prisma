@@ -1,0 +1,112 @@
+// ---------------------------------------------------------------------------
+// Authentication — the tables better-auth owns.
+//
+// The shape of User, Session, Account and Verification is dictated by
+// better-auth; only the LEONI-specific columns on User (role, site, isActive)
+// are ours. Keeping them in a separate file makes it obvious which parts must
+// not be renamed to suit our taste.
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+
+  // --- LEONI-specific ---
+  /// Determines what the user may do (brief section 4).
+  role     Role    @default(LTN1_STOREKEEPER)
+  /// The plant this user belongs to. Null only for ADMIN and LOGISTICS_MANAGER,
+  /// whose mandate spans both sites.
+  siteId   String?
+  site     Site?   @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  /// Deactivated rather than deleted, so their movements and approvals keep a
+  /// resolvable author in the audit trail.
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions Session[]
+  accounts Account[]
+
+  createdRequests   ReplenishmentRequest[] @relation("RequestCreatedBy")
+  approvedRequests  ReplenishmentRequest[] @relation("RequestApprovedBy")
+  statusChanges     RequestStatusHistory[]
+  comments          RequestComment[]
+  attachments       RequestAttachment[]
+  stockMovements    StockMovement[]
+  notifications     Notification[]
+  auditEntries      AuditLog[]
+
+  @@index([siteId])
+  @@index([role])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id String @id @default(cuid())
+
+  /// Namespace of the authentication method, e.g. "local:credential".
+  ///
+  /// Required by better-auth 1.7: sign-in matches an account on
+  /// (providerId, issuer, accountId) together, so an account row without it can
+  /// never be used to authenticate. Always written with
+  /// `createLocalAccountIssuer()` rather than a literal, so the value stays
+  /// correct if better-auth changes the encoding.
+  issuer String
+
+  /// For a credential account this is the user's own id.
+  accountId  String
+  providerId String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  /// Hashed by better-auth. Never read by application code.
+  password              String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([issuer, accountId])
+  @@index([userId])
+  @@index([providerId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}

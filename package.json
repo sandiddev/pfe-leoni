@@ -1,0 +1,41 @@
+{
+  "name": "leoni-replenishment",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Systeme de gestion et de reapprovisionnement des stocks entre LTN1 et LTN4",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "start": "turbo run start",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint -- --fix",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:watch": "turbo run test:watch",
+    "test:e2e": "pnpm --filter @leoni/web test:e2e",
+    "format": "prettier --write \"**/*.{ts,tsx,mjs,md,json,css,yaml,yml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,mjs,md,json,css,yaml,yml}\"",
+    "db:generate": "pnpm --filter @leoni/db db:generate",
+    "db:migrate": "pnpm --filter @leoni/db db:migrate",
+    "db:deploy": "pnpm --filter @leoni/db db:deploy",
+    "db:seed": "pnpm --filter @leoni/db db:seed",
+    "db:studio": "pnpm --filter @leoni/db db:studio",
+    "db:reset": "pnpm --filter @leoni/db db:reset",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "clean": "turbo run clean"
+  },
+  "devDependencies": {
+    "@leoni/prettier-config": "workspace:*",
+    "prettier": "catalog:",
+    "prettier-plugin-tailwindcss": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:"
+  },
+  "prettier": "@leoni/prettier-config"
+}

@@ -1,0 +1,78 @@
+// ---------------------------------------------------------------------------
+// Master data — the things that exist before any movement happens.
+// Editable only by the Administrator (brief section 4).
+// ---------------------------------------------------------------------------
+
+/// A LEONI plant. The project concerns exactly two, but nothing here assumes it.
+model Site {
+  id   String   @id @default(cuid())
+  /// "LTN1", "LTN4".
+  code String   @unique
+  name String
+  type SiteType
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users            User[]
+  storageLocations StorageLocation[]
+  stockItems       StockItem[]
+  requestsFrom     ReplenishmentRequest[] @relation("RequestFromSite")
+  requestsTo       ReplenishmentRequest[] @relation("RequestToSite")
+
+  @@map("site")
+}
+
+/// A bin or storage area inside a plant. One article may sit in several.
+model StorageLocation {
+  id          String  @id @default(cuid())
+  code        String
+  description String?
+
+  siteId String
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lots StockLot[]
+
+  @@unique([siteId, code])
+  @@index([siteId])
+  @@map("storage_location")
+}
+
+/// An article of the catalogue, independent of where it is stored.
+///
+/// Site-specific figures (stock, thresholds, consumption) live on StockItem:
+/// the same reference exists at both plants with different quantities, and
+/// flattening them onto one row would make the two sites overwrite each other.
+model Article {
+  id          String @id @default(cuid())
+  /// Manufacturer or LEONI reference. The natural key of the CSV export.
+  reference   String @unique
+  designation String
+
+  /// VPE / EUP: units per box. Every ordered quantity is a multiple of this.
+  vpe          Int
+  /// Days LTN4 needs to prepare and deliver (brief section 2).
+  leadTimeDays Int      @default(2)
+  /// From the master data, recomputable by Pareto (brief section 2).
+  abcClass     AbcClass @default(C)
+
+  /// Archived rather than deleted, so historical movements stay readable.
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stockItems   StockItem[]
+  requestLines ReplenishmentRequestLine[]
+  /// Article-level parameter override, when one article must deviate from its
+  /// ABC class defaults.
+  parameter    ReplenishmentParameter?
+
+  @@index([abcClass])
+  @@index([isActive])
+  @@map("article")
+}

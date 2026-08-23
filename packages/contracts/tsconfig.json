@@ -1,0 +1,6 @@
+{
+  "extends": "@leoni/tsconfig/library.json",
+  "compilerOptions": { "types": ["node"] },
+  "include": ["src/**/*.ts", "vitest.config.ts", "eslint.config.js"],
+  "exclude": ["node_modules"]
+}

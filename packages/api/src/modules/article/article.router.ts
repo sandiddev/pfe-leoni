@@ -1,0 +1,42 @@
+import {
+  articleByIdInputSchema,
+  articleListInputSchema,
+  updateArticleInputSchema,
+} from "@leoni/contracts";
+
+import { createTRPCRouter, permissionProcedure } from "../../trpc";
+import * as service from "./article.service";
+
+/**
+ * Transport for the article module.
+ *
+ * A router does exactly three things: validate the input against a schema,
+ * declare the permission the operation requires, and call the service. There is
+ * no business rule in this file and there should never be one — if a condition
+ * belongs to the process rather than to HTTP, it belongs in the service, where
+ * it can be unit-tested without a request.
+ *
+ * This is the reference shape for every other module.
+ */
+export const articleRouter = createTRPCRouter({
+  /** Paginated article list with the computed alert and suggestion columns. */
+  list: permissionProcedure("article:read")
+    .input(articleListInputSchema)
+    .query(async ({ ctx, input }) => service.list(ctx.actor, input)),
+
+  /** One article at one plant, with its lots, journal and threshold history. */
+  byId: permissionProcedure("article:read")
+    .input(articleByIdInputSchema)
+    .query(async ({ ctx, input }) => service.byId(ctx.actor, input)),
+
+  /**
+   * Master data edit.
+   *
+   * `article:write` is held only by the Administrator (brief section 4), so the
+   * permission alone expresses the rule that Min, Max, Lead Time, VPE and ABC
+   * class are not editable by the plants.
+   */
+  update: permissionProcedure("article:write")
+    .input(updateArticleInputSchema)
+    .mutation(async ({ ctx, input }) => service.update(ctx.actor, input)),
+});
