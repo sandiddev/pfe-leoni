@@ -18,24 +18,31 @@
  */
 
 /** Every way stock can change. Each one writes a StockMovement row. */
-export const MOVEMENT_TYPES = ["ENTRY", "EXIT", "ADJUSTMENT", "TRANSFER_IN", "TRANSFER_OUT"] as const;
+export const MOVEMENT_TYPES = [
+  "ENTRY",
+  "EXIT",
+  "ADJUSTMENT",
+  "TRANSFER_IN",
+  "TRANSFER_OUT",
+] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
-
 /** What caused a threshold recomputation, so a change can be explained later. */
-export const RECALCULATION_TRIGGERS = ["SCHEDULED", "MANUAL", "IMPORT", "PARAMETER_CHANGE"] as const;
+export const RECALCULATION_TRIGGERS = [
+  "SCHEDULED",
+  "MANUAL",
+  "IMPORT",
+  "PARAMETER_CHANGE",
+] as const;
 export type RecalculationTrigger = (typeof RECALCULATION_TRIGGERS)[number];
-
 
 /** Urgency declared by the requester. */
 export const REQUEST_PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
 export type RequestPriority = (typeof REQUEST_PRIORITIES)[number];
 
-
 /** LTN1 consumes, LTN4 supplies. The direction of every transfer follows. */
 export const SITE_TYPES = ["CONSUMING", "SUPPLYING"] as const;
 export type SiteType = (typeof SITE_TYPES)[number];
-
 
 /** Events the notification centre can raise. */
 export const NOTIFICATION_TYPES = [
@@ -50,4 +57,3 @@ export const NOTIFICATION_TYPES = [
   "LTN4_STOCK_OUT",
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
-

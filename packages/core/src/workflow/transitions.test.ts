@@ -91,8 +91,7 @@ describe("transition table against the permission matrix (brief sections 4 and 5
 
       const performsAll = nominalActions.every((action) =>
         allTransitions.some(
-          (transition) =>
-            transition.action === action && transition.allowedRoles.includes(role),
+          (transition) => transition.action === action && transition.allowedRoles.includes(role),
         ),
       );
 
