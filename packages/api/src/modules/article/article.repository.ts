@@ -253,6 +253,57 @@ export async function updateWithAudit(options: UpdateArticleOptions): Promise<vo
   ]);
 }
 
+/**
+ * The master-data fields an update compares against and audits.
+ *
+ * Selected rather than fetched whole: the service needs five columns to decide
+ * whether the thresholds went stale and to record the before-image, and
+ * returning `createdAt`/`updatedAt` alongside them would invite them into the
+ * audit payload, where a timestamp buries the two numbers that matter.
+ */
 export async function findRawArticle(articleId: string) {
-  return db.article.findUnique({ where: { id: articleId } });
+  return db.article.findUnique({
+    where: { id: articleId },
+    select: {
+      designation: true,
+      vpe: true,
+      leadTimeDays: true,
+      abcClass: true,
+      isActive: true,
+    },
+  });
 }
+
+/**
+ * The repository as one value, so a service can be handed a different one.
+ *
+ * The service imports this object rather than the individual functions, which
+ * is what lets `article.service.test.ts` pass a plain stub and exercise the
+ * business rules — site scoping, pagination, the coverage re-sort — with no
+ * Postgres and no fixtures. Before this seam existed the service layer had no
+ * tests at all, while the domain layer sat at a 95% coverage gate.
+ *
+ * The router cannot do the wiring: a `*.router.ts` may not import a
+ * `*.repository`, and that rule is worth more than the convenience. So the
+ * default lives on the service's parameter and the router stays ignorant.
+ */
+export const articleRepository = {
+  findMany,
+  findByArticleAndSite,
+  findLots,
+  findRecentMovements,
+  findThresholdHistory,
+  findParameterForClass,
+  findParameterForArticle,
+  findRawArticle,
+  updateWithAudit,
+};
+
+/**
+ * Derived from the implementation rather than hand-written beside it.
+ *
+ * A parallel interface is a second declaration of the same shape, and the one
+ * that drifts is always the one nothing validates. `typeof` cannot drift, and a
+ * test stub still gets checked against every signature.
+ */
+export type ArticleRepository = typeof articleRepository;

@@ -9,9 +9,10 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --coverage",
     "test:watch": "vitest",
-    "clean": "rm -rf .turbo node_modules *.tsbuildinfo"
+    "clean": "rm -rf .turbo node_modules *.tsbuildinfo",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@leoni/auth": "workspace:*",
@@ -27,6 +28,7 @@
     "@leoni/eslint-config": "workspace:*",
     "@leoni/tsconfig": "workspace:*",
     "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

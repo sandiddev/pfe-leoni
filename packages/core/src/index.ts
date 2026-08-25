@@ -35,11 +35,6 @@ export {
   type RequestPriority,
   SITE_TYPES,
   type SiteType,
-  isMovementType,
-  isNotificationType,
-  isRecalculationTrigger,
-  isRequestPriority,
-  isSiteType,
 } from "./shared/enums";
 
 // --- Errors ----------------------------------------------------------------

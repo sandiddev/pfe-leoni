@@ -149,6 +149,11 @@ export const base = tseslint.config(
       "@typescript-eslint/no-non-null-assertion": "off",
       "@typescript-eslint/no-unsafe-assignment": "off",
       "@typescript-eslint/no-unnecessary-condition": "off",
+      // A stub standing in for an async repository method is declared `async`
+      // to match the signature it replaces, and has nothing to await. That is
+      // the correct shape, not an oversight. `no-floating-promises` stays on,
+      // so a test that forgets to await a real promise is still caught.
+      "@typescript-eslint/require-await": "off",
       "no-console": "off",
     },
   },

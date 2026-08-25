@@ -10,42 +10,32 @@
  * client, so a DTO that needed one of these was previously widened to `string`,
  * which forced a cast at the first component that rendered its French label.
  *
- * The shape follows `ROLES`: a `const` array (iterable, so a screen can map
- * over it), a union derived from it, and a guard for narrowing an untrusted
- * string at a boundary.
+ * The shape follows `ROLES`: a `const` array — iterable, so a screen can map
+ * over it and `z.enum()` can validate against it — and a union derived from it.
+ * No `isX` guards here: nothing narrows an untrusted string into one of these
+ * yet, and an untested guard is worse than an absent one. Add the guard with
+ * the caller that needs it.
  */
 
 /** Every way stock can change. Each one writes a StockMovement row. */
 export const MOVEMENT_TYPES = ["ENTRY", "EXIT", "ADJUSTMENT", "TRANSFER_IN", "TRANSFER_OUT"] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
-export function isMovementType(value: string): value is MovementType {
-  return (MOVEMENT_TYPES as readonly string[]).includes(value);
-}
 
 /** What caused a threshold recomputation, so a change can be explained later. */
 export const RECALCULATION_TRIGGERS = ["SCHEDULED", "MANUAL", "IMPORT", "PARAMETER_CHANGE"] as const;
 export type RecalculationTrigger = (typeof RECALCULATION_TRIGGERS)[number];
 
-export function isRecalculationTrigger(value: string): value is RecalculationTrigger {
-  return (RECALCULATION_TRIGGERS as readonly string[]).includes(value);
-}
 
 /** Urgency declared by the requester. */
 export const REQUEST_PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
 export type RequestPriority = (typeof REQUEST_PRIORITIES)[number];
 
-export function isRequestPriority(value: string): value is RequestPriority {
-  return (REQUEST_PRIORITIES as readonly string[]).includes(value);
-}
 
 /** LTN1 consumes, LTN4 supplies. The direction of every transfer follows. */
 export const SITE_TYPES = ["CONSUMING", "SUPPLYING"] as const;
 export type SiteType = (typeof SITE_TYPES)[number];
 
-export function isSiteType(value: string): value is SiteType {
-  return (SITE_TYPES as readonly string[]).includes(value);
-}
 
 /** Events the notification centre can raise. */
 export const NOTIFICATION_TYPES = [
@@ -61,6 +51,3 @@ export const NOTIFICATION_TYPES = [
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
-export function isNotificationType(value: string): value is NotificationType {
-  return (NOTIFICATION_TYPES as readonly string[]).includes(value);
-}

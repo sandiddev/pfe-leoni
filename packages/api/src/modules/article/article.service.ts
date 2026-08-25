@@ -20,7 +20,7 @@ import type { Actor } from "../../context";
 import { assertCanAccessSite, resolveSiteFilter } from "../../middlewares/site-scope";
 import type { AuditPayload } from "../../shared/audit";
 import * as mapper from "./article.mapper";
-import * as repository from "./article.repository";
+import { articleRepository, type ArticleRepository } from "./article.repository";
 
 /**
  * Business rules for the article module.
@@ -28,6 +28,12 @@ import * as repository from "./article.repository";
  * The service is where a request becomes a decision: it resolves what the actor
  * is allowed to see, asks the repository for rows, and hands them to the domain
  * layer to be interpreted. It contains no SQL and no HTTP.
+ *
+ * Each entry point takes a parameter object whose `repository` defaults to the
+ * Prisma-backed one. That is the seam the unit tests use: the rules below —
+ * which site an actor really gets, where the extra page row goes, how a null
+ * coverage sorts — are decisions worth testing, and they should not need a
+ * database to exercise. The router never passes it.
  */
 
 const MOVEMENT_HISTORY_LIMIT = 25;
@@ -45,7 +51,9 @@ const THRESHOLD_HISTORY_LIMIT = 30;
  * so callers index it without a fallback of their own — three call sites
  * previously each carried one, and one of them disagreed with the other two.
  */
-async function loadParametersByClass(): Promise<ReadonlyMap<AbcClass, ClassParameters>> {
+async function loadParametersByClass(
+  repository: ArticleRepository,
+): Promise<ReadonlyMap<AbcClass, ClassParameters>> {
   const parameters = await Promise.all(
     ABC_CLASSES.map(async (abcClass) => ({
       abcClass,
@@ -82,13 +90,25 @@ function parametersFor(
   return byClass.get(abcClass) ?? defaultParametersForClass(abcClass);
 }
 
-export async function list(actor: Actor, input: ArticleListInput): Promise<Page<ArticleListItem>> {
+/** What every entry point in this module needs. */
+interface ServiceParams<TInput> {
+  readonly actor: Actor;
+  readonly input: TInput;
+  /** Injected by the tests. Defaults to the Prisma-backed repository. */
+  readonly repository?: ArticleRepository;
+}
+
+export async function list({
+  actor,
+  input,
+  repository = articleRepository,
+}: ServiceParams<ArticleListInput>): Promise<Page<ArticleListItem>> {
   // Whatever site the client asked for, this is the site it actually gets.
   const siteId = resolveSiteFilter(actor, input.siteId);
 
   const [{ rows, totalCount }, parametersByClass] = await Promise.all([
     repository.findMany({ input, siteId }),
-    loadParametersByClass(),
+    loadParametersByClass(repository),
   ]);
 
   // The extra row fetched by the repository answers "is there another page?"
@@ -127,7 +147,11 @@ export async function list(actor: Actor, input: ArticleListInput): Promise<Page<
   };
 }
 
-export async function byId(actor: Actor, input: ArticleByIdInput): Promise<ArticleDetail> {
+export async function byId({
+  actor,
+  input,
+  repository = articleRepository,
+}: ServiceParams<ArticleByIdInput>): Promise<ArticleDetail> {
   const siteId = resolveSiteFilter(actor, input.siteId);
   const row = await repository.findByArticleAndSite(input.articleId, siteId);
 
@@ -144,7 +168,7 @@ export async function byId(actor: Actor, input: ArticleByIdInput): Promise<Artic
   // checked against the actor's plant.
   assertCanAccessSite(actor, row.site.id);
 
-  const parametersByClass = await loadParametersByClass();
+  const parametersByClass = await loadParametersByClass(repository);
   const parameters = parametersFor(parametersByClass, row.article.abcClass);
 
   const [lots, movements, thresholdHistory] = await Promise.all([
@@ -212,10 +236,14 @@ function auditedFields(article: AuditableArticle): AuditPayload {
  * what" has to be answerable months later — that is what `AuditLog` is for, and
  * the repository writes it in the same transaction as the row.
  */
-export async function update(
-  actor: Actor,
-  input: UpdateArticleInput,
-): Promise<{ articleId: string; thresholdsNeedRecalculation: boolean }> {
+export async function update({
+  actor,
+  input,
+  repository = articleRepository,
+}: ServiceParams<UpdateArticleInput>): Promise<{
+  articleId: string;
+  thresholdsNeedRecalculation: boolean;
+}> {
   const existing = await repository.findRawArticle(input.articleId);
 
   if (existing === null) {
