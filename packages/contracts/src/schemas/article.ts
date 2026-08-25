@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { MovementType, RecalculationTrigger } from "@leoni/core";
+
 import {
   abcClassSchema,
   alertLevelSchema,
@@ -119,13 +121,13 @@ export interface ThresholdHistoryPoint {
   readonly minThreshold: number;
   readonly maxThreshold: number;
   readonly safetyStock: number;
-  readonly trigger: string;
+  readonly trigger: RecalculationTrigger;
 }
 
 /** A movement in the article's journal. */
 export interface StockMovementItem {
   readonly id: string;
-  readonly type: string;
+  readonly type: MovementType;
   readonly quantity: number;
   readonly occurredAt: Date;
   readonly reference: string | null;

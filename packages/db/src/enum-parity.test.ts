@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { ABC_CLASSES, ALERT_LEVELS, REQUEST_STATUSES, ROLES } from "@leoni/core";
+import {
+  ABC_CLASSES,
+  ALERT_LEVELS,
+  MOVEMENT_TYPES,
+  NOTIFICATION_TYPES,
+  RECALCULATION_TRIGGERS,
+  REQUEST_PRIORITIES,
+  REQUEST_STATUSES,
+  ROLES,
+  SITE_TYPES,
+} from "@leoni/core";
 
-import { AbcClass, AlertLevel, RequestStatus, Role } from "./generated/prisma/enums";
+import * as prismaEnums from "./generated/prisma/enums";
 
 /**
  * The domain package and the database each declare these value sets, and they
@@ -14,35 +24,65 @@ import { AbcClass, AlertLevel, RequestStatus, Role } from "./generated/prisma/en
  * These tests are that agreement. Adding a status to the Prisma schema without
  * adding it to `@leoni/core` (or the reverse) fails here, at build time, rather
  * than as an unhandled case in a `switch` somewhere in production.
+ *
+ * The check runs in **both** directions on purpose. Comparing only the pairs
+ * someone remembered to list is how a new Prisma enum arrives with no domain
+ * counterpart and no test failure — which is what had already happened to five
+ * of the nine enums in this schema.
  */
-function prismaValues(enumObject: Readonly<Record<string, string>>): string[] {
-  return Object.values(enumObject).sort();
+
+/** Domain union name -> the values it declares. */
+const DOMAIN_ENUMS = {
+  AbcClass: ABC_CLASSES,
+  AlertLevel: ALERT_LEVELS,
+  MovementType: MOVEMENT_TYPES,
+  NotificationType: NOTIFICATION_TYPES,
+  RecalculationTrigger: RECALCULATION_TRIGGERS,
+  RequestPriority: REQUEST_PRIORITIES,
+  RequestStatus: REQUEST_STATUSES,
+  Role: ROLES,
+  SiteType: SITE_TYPES,
+} satisfies Readonly<Record<string, readonly string[]>>;
+
+/**
+ * Prisma emits each enum as a frozen object of value -> value, alongside its
+ * type aliases. Filtering to plain objects is what separates the enums from the
+ * types the same module exports.
+ */
+function prismaEnumNames(): string[] {
+  return Object.entries(prismaEnums)
+    .filter(([, value]) => typeof value === "object" && value !== null)
+    .map(([name]) => name)
+    .toSorted();
 }
 
-function domainValues(values: readonly string[]): string[] {
-  return [...values].sort();
+function valuesOf(enumObject: unknown): string[] {
+  if (typeof enumObject !== "object" || enumObject === null) {
+    throw new Error("Not a Prisma enum object.");
+  }
+  return Object.values(enumObject)
+    .filter((value): value is string => typeof value === "string")
+    .toSorted();
 }
 
 describe("enum parity between @leoni/core and the Prisma schema", () => {
-  it("agrees on the set of roles", () => {
-    expect(prismaValues(Role)).toStrictEqual(domainValues(ROLES));
+  it("declares a domain union for every Prisma enum", () => {
+    // The direction that actually catches new work: a `enum Foo` added to the
+    // schema with no matching const array in @leoni/core fails right here.
+    expect(prismaEnumNames()).toStrictEqual(Object.keys(DOMAIN_ENUMS).toSorted());
   });
 
-  it("agrees on the set of request statuses", () => {
-    expect(prismaValues(RequestStatus)).toStrictEqual(domainValues(REQUEST_STATUSES));
-  });
+  it.each(Object.keys(DOMAIN_ENUMS))("agrees on the members of %s", (name) => {
+    const domain = DOMAIN_ENUMS[name as keyof typeof DOMAIN_ENUMS];
+    const prisma = prismaEnums[name as keyof typeof prismaEnums];
 
-  it("agrees on the set of alert levels", () => {
-    expect(prismaValues(AlertLevel)).toStrictEqual(domainValues(ALERT_LEVELS));
-  });
-
-  it("agrees on the set of ABC classes", () => {
-    expect(prismaValues(AbcClass)).toStrictEqual(domainValues(ABC_CLASSES));
+    expect(valuesOf(prisma)).toStrictEqual([...domain].toSorted());
   });
 
   it("does not store LATE as a request status", () => {
     // Lateness is derived from expectedDeliveryAt, not stored, so that a late
     // request still shows where it actually is in the process.
-    expect(prismaValues(RequestStatus)).not.toContain("LATE");
+    expect([...REQUEST_STATUSES]).not.toContain("LATE");
+    expect(valuesOf(prismaEnums.RequestStatus)).not.toContain("LATE");
   });
 });

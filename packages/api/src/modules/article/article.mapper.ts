@@ -4,6 +4,7 @@ import type {
   StockMovementItem,
   ThresholdHistoryPoint,
 } from "@leoni/contracts";
+import type { MovementType, RecalculationTrigger } from "@leoni/core";
 import { assessStockItem } from "@leoni/core";
 import type { Prisma } from "@leoni/db";
 
@@ -109,7 +110,7 @@ export function toLotItem(row: LotRow): StockLotItem {
 
 interface MovementRow {
   id: string;
-  type: string;
+  type: MovementType;
   quantity: number;
   occurredAt: Date;
   reference: string | null;
@@ -133,7 +134,7 @@ interface ThresholdHistoryRow {
   minThreshold: Prisma.Decimal;
   maxThreshold: Prisma.Decimal;
   safetyStock: Prisma.Decimal;
-  trigger: string;
+  trigger: RecalculationTrigger;
 }
 
 export function toThresholdHistoryPoint(row: ThresholdHistoryRow): ThresholdHistoryPoint {
