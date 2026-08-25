@@ -6,6 +6,7 @@ import {
   ForbiddenActionError,
   InvalidInputError,
   isDomainError,
+  NotFoundError,
   TransitionNotAllowedError,
 } from "./domain-error";
 
@@ -22,6 +23,16 @@ describe("the domain error hierarchy", () => {
     expect(new InvalidInputError("x").code).toBe("INVALID_INPUT");
     expect(new TransitionNotAllowedError("x").code).toBe("TRANSITION_NOT_ALLOWED");
     expect(new ForbiddenActionError("x").code).toBe("FORBIDDEN_ACTION");
+    expect(new NotFoundError("x").code).toBe("NOT_FOUND");
+  });
+
+  it("routes a missing entity through the domain hierarchy, not a bare Error", () => {
+    // A service that throws a plain `Error` for "not found" reaches the tRPC
+    // error formatter unrecognised and surfaces as a 500 with its message
+    // withheld — which is what an earlier ArticleNotFoundError did.
+    const error = new NotFoundError("Article introuvable : abc", { articleId: "abc" });
+    expect(isDomainError(error)).toBe(true);
+    expect(error.details).toStrictEqual({ articleId: "abc" });
   });
 
   it("defaults to empty details rather than undefined", () => {

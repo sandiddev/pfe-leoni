@@ -8,6 +8,7 @@ describe("assertNever", () => {
   it("throws when an unhandled union member reaches it at runtime", () => {
     // The compiler normally prevents this; the throw is the safety net for data
     // that arrives from outside the type system, such as a legacy import.
+    // eslint-disable-next-line no-restricted-syntax -- deliberately breaking the type system is the only way to reach the runtime guard being tested.
     const unexpected = "SOMETHING_NEW" as unknown as never;
     expect(() => assertNever(unexpected, "request status")).toThrow(/request status/);
   });

@@ -1,5 +1,8 @@
 import type { ArticleListInput } from "@leoni/contracts";
-import { db, type Prisma } from "@leoni/db";
+import type { AbcClass } from "@leoni/core";
+import { db, Prisma } from "@leoni/db";
+
+import type { AuditEntry } from "../../shared/audit";
 
 /**
  * Persistence for the article module.
@@ -197,7 +200,7 @@ export async function findThresholdHistory(stockItemId: string, limit: number) {
 }
 
 /** The parameters in force for a class, used to recompute a suggestion. */
-export async function findParameterForClass(abcClass: "A" | "B" | "C") {
+export async function findParameterForClass(abcClass: AbcClass) {
   return db.replenishmentParameter.findUnique({ where: { abcClass } });
 }
 
@@ -209,14 +212,98 @@ export interface UpdateArticleData {
   readonly designation: string;
   readonly vpe: number;
   readonly leadTimeDays: number;
-  readonly abcClass: "A" | "B" | "C";
+  readonly abcClass: AbcClass;
   readonly isActive: boolean;
 }
 
-export async function update(articleId: string, data: UpdateArticleData) {
-  return db.article.update({ where: { id: articleId }, data });
+export interface UpdateArticleOptions {
+  readonly articleId: string;
+  readonly data: UpdateArticleData;
+  /** Built by the service. Written in the same transaction as the row. */
+  readonly audit: AuditEntry;
 }
 
-export async function findRawArticle(articleId: string) {
-  return db.article.findUnique({ where: { id: articleId } });
+/**
+ * Updates an article and records the change, atomically.
+ *
+ * The two writes are one transaction rather than two calls because a master
+ * data edit with no trail is exactly what this application exists to replace.
+ * If the audit insert fails — a constraint, a dropped connection — the article
+ * edit must fail with it, or the trail has a hole nobody will notice until
+ * someone asks who changed a lead time.
+ *
+ * Nullable Json columns need Prisma's explicit `DbNull`: passing a bare `null`
+ * would be read as "JSON null", a different value in Postgres.
+ */
+export async function updateWithAudit(options: UpdateArticleOptions): Promise<void> {
+  const { articleId, data, audit } = options;
+
+  await db.$transaction([
+    db.article.update({ where: { id: articleId }, data }),
+    db.auditLog.create({
+      data: {
+        entity: audit.entity,
+        entityId: audit.entityId,
+        action: audit.action,
+        before: audit.before ?? Prisma.DbNull,
+        after: audit.after ?? Prisma.DbNull,
+        actorId: audit.actorId,
+      },
+    }),
+  ]);
 }
+
+/**
+ * The master-data fields an update compares against and audits.
+ *
+ * Selected rather than fetched whole: the service needs five columns to decide
+ * whether the thresholds went stale and to record the before-image, and
+ * returning `createdAt`/`updatedAt` alongside them would invite them into the
+ * audit payload, where a timestamp buries the two numbers that matter.
+ */
+export async function findRawArticle(articleId: string) {
+  return db.article.findUnique({
+    where: { id: articleId },
+    select: {
+      designation: true,
+      vpe: true,
+      leadTimeDays: true,
+      abcClass: true,
+      isActive: true,
+    },
+  });
+}
+
+/**
+ * The repository as one value, so a service can be handed a different one.
+ *
+ * The service imports this object rather than the individual functions, which
+ * is what lets `article.service.test.ts` pass a plain stub and exercise the
+ * business rules — site scoping, pagination, the coverage re-sort — with no
+ * Postgres and no fixtures. Before this seam existed the service layer had no
+ * tests at all, while the domain layer sat at a 95% coverage gate.
+ *
+ * The router cannot do the wiring: a `*.router.ts` may not import a
+ * `*.repository`, and that rule is worth more than the convenience. So the
+ * default lives on the service's parameter and the router stays ignorant.
+ */
+export const articleRepository = {
+  findMany,
+  findByArticleAndSite,
+  findLots,
+  findRecentMovements,
+  findThresholdHistory,
+  findParameterForClass,
+  findParameterForArticle,
+  findRawArticle,
+  updateWithAudit,
+};
+
+/**
+ * Derived from the implementation rather than hand-written beside it.
+ *
+ * A parallel interface is a second declaration of the same shape, and the one
+ * that drifts is always the one nothing validates. `typeof` cannot drift, and a
+ * test stub still gets checked against every signature.
+ */
+export type ArticleRepository = typeof articleRepository;

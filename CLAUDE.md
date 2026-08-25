@@ -62,9 +62,9 @@ Every feature is four files, and the dependency between them runs one way only:
 ```
 <feature>.router.ts      validate input · declare permission · call the service
        ▼
-<feature>.service.ts     business rules · calls @leoni/core · owns the transaction
+<feature>.service.ts     business rules · calls @leoni/core · decides what to record
        ▼
-<feature>.repository.ts  the ONLY place Prisma appears
+<feature>.repository.ts  the ONLY place Prisma appears · owns the transaction
        ▼
 <feature>.mapper.ts      Prisma row ⇄ DTO (Decimal → number happens here)
 ```
@@ -74,8 +74,34 @@ different arrangement for the next module.
 
 - A router that contains an `if` about business state is a bug — move it to the service.
 - A service that mentions `db.` is a bug — move it to the repository.
-- Every write that changes a request's status **must** write `RequestStatusHistory` in the
-  same transaction. Not optionally. That trail is the point of the project.
+
+**Injection.** A service entry point takes a parameter object whose `repository` defaults to
+the real one:
+
+```ts
+export async function list({
+  actor, input, repository = articleRepository,
+}: ServiceParams<ArticleListInput>): Promise<Page<ArticleListItem>> { … }
+```
+
+That seam is what lets the rules be unit-tested with a plain object stub and no Postgres — see
+`article.service.test.ts`. It lives on the service, not the router: a `*.router.ts` may not
+import a `*.repository`, and that rule is worth more than the symmetry. The port is
+`typeof articleRepository`, never a hand-written parallel interface.
+
+**The transaction rule.** Every write that changes a request's status **must** write
+`RequestStatusHistory` in the same transaction. Not optionally. That trail is the point of the
+project. The same applies to `AuditLog` for master-data and parameter edits.
+
+Because a service may not import `@leoni/db`, it cannot open the transaction itself. So:
+
+> the **service** decides which facts to record — what changed, by whom, what the change is
+> called; the **repository** guarantees they land atomically, taking the history or audit row
+> as part of its input and writing both inside one `db.$transaction`.
+
+`updateWithAudit` in `article.repository.ts` is the reference. What must never exist is a
+repository method that writes the row and returns, leaving the trail to a second call that a
+later refactor can drop.
 
 ---
 
@@ -87,7 +113,9 @@ Enforced by `packages/tooling/tsconfig` and `packages/tooling/eslint-config`:
   `noPropertyAccessFromIndexSignature`, `noImplicitOverride`, `verbatimModuleSyntax`.
 - **`any` is banned.** Use `unknown` and narrow.
 - **`!` (non-null) is banned** outside tests. Write a helper that throws with a real message.
-- **`as` is banned** except `as const`. Use `satisfies`.
+- **`as` is banned** except `as const` and the always-safe widening `as unknown`. Use
+  `satisfies`, or narrow with a type guard. Enforced by `no-restricted-syntax` — note that
+  `consistent-type-assertions` alone does _not_ express this, which is how three casts got in.
 - **`import type { X }`, never `import { type X }`.** With `verbatimModuleSyntax` the inline
   form still emits a side-effect import, which drags server modules into browser bundles.
   This has already bitten this codebase once.
@@ -111,7 +139,12 @@ Never `throw new Error("string")` for a business rule.
 - Functions ≤ ~40 lines, ≤ 4 parameters — beyond that, take a parameter object.
 - **No magic numbers.** Anything the logistics team might tune lives in
   `ReplenishmentParameter` in the database, not in source. This is a hard requirement of
-  the brief (§3.4), not a preference.
+  the brief (§3.4), not a preference. The per-class fallbacks are written **once**, in
+  `DEFAULT_CLASS_PARAMETERS` (`@leoni/core`). If you are about to write `?? 1` beside a
+  threshold, read [docs/business-rules.md](docs/business-rules.md) §1 first — that exact
+  fallback was a live bug.
+- Functions are capped at 60 lines and 4 parameters by lint (off for tests, the seed, and
+  `.tsx`, where the length is markup rather than logic).
 - Naming: `PascalCase` types/components, `camelCase` values, `SCREAMING_SNAKE` constants,
   `kebab-case` files, `<feature>.<layer>.ts` in the API.
 - **Comments explain _why_, never _what_.** If a line needs a comment to say what it does,
@@ -191,12 +224,85 @@ Demo accounts (password `Leoni2026!`):
 
 ---
 
-## 10. Further reading
+## 10. Business rules
 
-| Document                                       | What it answers                              |
-| ---------------------------------------------- | -------------------------------------------- |
-| [docs/architecture.md](docs/architecture.md)   | Why the layers exist and how a request flows |
-| [docs/domain.md](docs/domain.md)               | The formulas, the workflow, the glossary     |
-| [docs/conventions.md](docs/conventions.md)     | The rules above, with the reasoning          |
-| [docs/design-system.md](docs/design-system.md) | Tokens, when to add a primitive vs a pattern |
-| [docs/adr/](docs/adr/)                         | One short record per locked decision         |
+The formulas and the workflow are one thing; the invariants they must never violate are
+another. [docs/business-rules.md](docs/business-rules.md) states each one with its reason and
+the test that proves it. **Read it before writing a feature module** — most of what looks like
+a decision has already been made there.
+
+The ones that cause the worst damage when broken:
+
+- `safetyStock ≤ min ≤ max`, for one consistent set of inputs. Call `computeThresholds()`.
+- A proposed quantity is always a whole multiple of VPE, rounded **up**.
+- Thresholds round **up**, or the safety margin erodes silently.
+- Stock exactly at Min is **CRITICAL**, not WARNING — the margin is fully consumed.
+- Coverage is `null` for an unconsumed article, never `Infinity` and never `0`; and it sorts
+  last in **both** directions.
+- The consumption average divides by the window length, never by the days that had movements.
+- `currentStock` never changes without a `StockMovement` in the same transaction.
+- A status never changes without a `RequestStatusHistory` row in the same transaction.
+- Site scoping is never a client-supplied filter, and a lookup by id is re-checked on the row
+  that came back — a `WHERE` clause cannot protect a `findUnique`.
+- `LATE` is never a status.
+- Every tunable number is a row in `ReplenishmentParameter`; `DEFAULT_CLASS_PARAMETERS` is the
+  only fallback.
+
+---
+
+## 11. What actually stops you
+
+A rule nobody has watched fail is a comment. This table says what enforces each rule and how
+to make it fire — three rules in this file were honour-system until recently, and each was
+already being violated.
+
+| Rule                                        | Enforced by                                                 | See it fire                                                   |
+| ------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------- |
+| Package A may not import package B          | **pnpm** (undeclared dep) + ESLint `no-restricted-imports`  | add `import { db } from "@leoni/db"` to a service             |
+| Router ⇸ repository, service ⇸ trpc, …      | ESLint `api.js`, per-file-suffix                            | import a `*.repository` from a `*.router.ts`                  |
+| `@leoni/core` imports nothing               | ESLint `domain.js`                                          | import Zod into `packages/core`                               |
+| Domain never reads the clock                | ESLint `domain.js` (`Date.now`, argless `new Date()`)       | call `Date.now()` in a formula                                |
+| `as` outside `as const` / `as unknown`      | ESLint `no-restricted-syntax`                               | `const x = y as string`                                       |
+| `process.env` outside `@leoni/env`          | ESLint `no-restricted-syntax`                               | `process.env["FOO"]` in `apps/web`                            |
+| `any`, `!`, `enum`, `export *`, default exp | ESLint + `tsconfig`                                         | any of them, anywhere                                         |
+| `import { type X }`                         | `@typescript-eslint/no-import-type-side-effects`            | use the inline form                                           |
+| ≤ 60 lines, ≤ 4 params                      | ESLint `max-lines-per-function`, `max-params`               | add a fifth parameter                                         |
+| Raw hex / Tailwind arbitrary values         | ESLint `react.js`, `next.js`                                | `bg-[#0056A4]` in a component                                 |
+| Prisma enum ⇄ `@leoni/core` union           | `packages/db/src/enum-parity.test.ts` (**both directions**) | add a value, or a whole enum, to the schema only              |
+| Transition roles ⇄ permission matrix        | `packages/core/src/workflow/transitions.test.ts`            | add a role to `allowedRoles` that lacks the permission        |
+| Every action has a French label             | the compiler (`TransitionAction` types the label map)       | add a transition action without wording it                    |
+| Class defaults ⇄ Prisma column defaults     | `packages/db/src/parameter-parity.test.ts`                  | change a `@default` to a value no class uses                  |
+| Domain coverage ≥ 95%                       | `vitest --coverage`, wired into `pnpm test`                 | add an untested exported function to `@leoni/core`            |
+| Service coverage ≥ 85%                      | `vitest --coverage` in `@leoni/api`                         | add an untested branch to a service                           |
+| **Everything above, per edit**              | `.claude/hooks/eslint-file.sh` via `PostToolUse`            | edit any `.ts` with a violation — it reports in the same turn |
+
+Convention only — nothing enforces these, so they are on you:
+
+- comments explain _why_, never _what_;
+- French for user-visible strings (the label maps are typed, but a hardcoded string in JSX is
+  invisible to lint);
+- naming (`PascalCase` / `camelCase` / `SCREAMING_SNAKE` / `kebab-case`);
+- one responsibility per file.
+
+**The hook is not a merge gate.** It constrains Claude Code, not a human with a terminal, and
+nothing here stops a violation reaching `origin/main`. A GitHub Actions workflow running
+`pnpm typecheck && pnpm lint && pnpm test` on Node 24 is one file, if that gate is wanted.
+
+Before saying a change is done:
+
+```bash
+pnpm typecheck && pnpm lint && pnpm test
+```
+
+---
+
+## 12. Further reading
+
+| Document                                         | What it answers                               |
+| ------------------------------------------------ | --------------------------------------------- |
+| [docs/business-rules.md](docs/business-rules.md) | The invariants, and the test that proves each |
+| [docs/architecture.md](docs/architecture.md)     | Why the layers exist and how a request flows  |
+| [docs/domain.md](docs/domain.md)                 | The formulas, the workflow, the glossary      |
+| [docs/conventions.md](docs/conventions.md)       | The rules above, with the reasoning           |
+| [docs/design-system.md](docs/design-system.md)   | Tokens, when to add a primitive vs a pattern  |
+| [docs/adr/](docs/adr/)                           | One short record per locked decision          |

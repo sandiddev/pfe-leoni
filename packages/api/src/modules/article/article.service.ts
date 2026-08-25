@@ -6,12 +6,21 @@ import type {
   Page,
   UpdateArticleInput,
 } from "@leoni/contracts";
-import { computeLegacyThresholds, daysOfCoverage, DEFAULT_WARNING_MARGIN_RATIO } from "@leoni/core";
+import {
+  ABC_CLASSES,
+  type AbcClass,
+  type ClassParameters,
+  computeLegacyThresholds,
+  daysOfCoverage,
+  defaultParametersForClass,
+  NotFoundError,
+} from "@leoni/core";
 
 import type { Actor } from "../../context";
 import { assertCanAccessSite, resolveSiteFilter } from "../../middlewares/site-scope";
+import type { AuditPayload } from "../../shared/audit";
 import * as mapper from "./article.mapper";
-import * as repository from "./article.repository";
+import { articleRepository, type ArticleRepository } from "./article.repository";
 
 /**
  * Business rules for the article module.
@@ -19,22 +28,16 @@ import * as repository from "./article.repository";
  * The service is where a request becomes a decision: it resolves what the actor
  * is allowed to see, asks the repository for rows, and hands them to the domain
  * layer to be interpreted. It contains no SQL and no HTTP.
+ *
+ * Each entry point takes a parameter object whose `repository` defaults to the
+ * Prisma-backed one. That is the seam the unit tests use: the rules below —
+ * which site an actor really gets, where the extra page row goes, how a null
+ * coverage sorts — are decisions worth testing, and they should not need a
+ * database to exercise. The router never passes it.
  */
 
 const MOVEMENT_HISTORY_LIMIT = 25;
 const THRESHOLD_HISTORY_LIMIT = 30;
-
-interface ParameterSet {
-  readonly safetyDays: number;
-  readonly extraCoverageDays: number;
-  readonly warningMarginRatio: number;
-}
-
-const FALLBACK_PARAMETERS: ParameterSet = {
-  safetyDays: 1,
-  extraCoverageDays: 10,
-  warningMarginRatio: DEFAULT_WARNING_MARGIN_RATIO,
-};
 
 /**
  * Loads the tuning parameters for every ABC class once per request.
@@ -42,41 +45,70 @@ const FALLBACK_PARAMETERS: ParameterSet = {
  * The alternative — looking them up per article — would issue one query per row
  * on a 150-row page. There are exactly three classes, so they are fetched once
  * and shared.
+ *
+ * A class with no row falls back to `DEFAULT_CLASS_PARAMETERS`, which is the
+ * only place those defaults are written. The map is total over `ABC_CLASSES`,
+ * so callers index it without a fallback of their own — three call sites
+ * previously each carried one, and one of them disagreed with the other two.
  */
-async function loadParametersByClass(): Promise<Map<string, ParameterSet>> {
-  const classes = ["A", "B", "C"] as const;
+async function loadParametersByClass(
+  repository: ArticleRepository,
+): Promise<ReadonlyMap<AbcClass, ClassParameters>> {
   const parameters = await Promise.all(
-    classes.map(async (abcClass) => repository.findParameterForClass(abcClass)),
+    ABC_CLASSES.map(async (abcClass) => ({
+      abcClass,
+      row: await repository.findParameterForClass(abcClass),
+    })),
   );
 
-  const byClass = new Map<string, ParameterSet>();
-
-  for (const [index, parameter] of parameters.entries()) {
-    const abcClass = classes[index];
-    if (abcClass === undefined) continue;
-
-    byClass.set(
+  return new Map(
+    parameters.map(({ abcClass, row }) => [
       abcClass,
-      parameter === null
-        ? FALLBACK_PARAMETERS
+      row === null
+        ? defaultParametersForClass(abcClass)
         : {
-            safetyDays: parameter.safetyDays.toNumber(),
-            extraCoverageDays: parameter.extraCoverageDays.toNumber(),
-            warningMarginRatio: parameter.warningMarginRatio.toNumber(),
+            safetyDays: row.safetyDays.toNumber(),
+            extraCoverageDays: row.extraCoverageDays.toNumber(),
+            averagingWindowDays: row.averagingWindowDays,
+            warningMarginRatio: row.warningMarginRatio.toNumber(),
           },
-    );
-  }
-
-  return byClass;
+    ]),
+  );
 }
 
-export async function list(actor: Actor, input: ArticleListInput): Promise<Page<ArticleListItem>> {
+/**
+ * Reads a class out of the map built above.
+ *
+ * The map is total, but `Map.get` is typed as possibly-undefined and there is
+ * no honest way to tell the compiler otherwise. Narrowing here — once, with the
+ * same defaults as the loader — beats a `!` at each call site.
+ */
+function parametersFor(
+  byClass: ReadonlyMap<AbcClass, ClassParameters>,
+  abcClass: AbcClass,
+): ClassParameters {
+  return byClass.get(abcClass) ?? defaultParametersForClass(abcClass);
+}
+
+/** What every entry point in this module needs. */
+interface ServiceParams<TInput> {
+  readonly actor: Actor;
+  readonly input: TInput;
+  /** Injected by the tests. Defaults to the Prisma-backed repository. */
+  readonly repository?: ArticleRepository;
+}
+
+export async function list({
+  actor,
+  input,
+  repository = articleRepository,
+}: ServiceParams<ArticleListInput>): Promise<Page<ArticleListItem>> {
   // Whatever site the client asked for, this is the site it actually gets.
   const siteId = resolveSiteFilter(actor, input.siteId);
 
   const [{ rows, totalCount }, parametersByClass] = await Promise.all([
     repository.findMany({ input, siteId }),
-    loadParametersByClass(),
+    loadParametersByClass(repository),
   ]);
 
   // The extra row fetched by the repository answers "is there another page?"
@@ -85,7 +117,7 @@ export async function list(actor: Actor, input: ArticleListInput): Promise<Page<
   const page = hasMore ? rows.slice(0, input.limit) : rows;
 
   const items = page.map((row) => {
-    const parameters = parametersByClass.get(row.article.abcClass) ?? FALLBACK_PARAMETERS;
+    const parameters = parametersFor(parametersByClass, row.article.abcClass);
     return mapper.toListItem({
       row,
       safetyDays: parameters.safetyDays,
@@ -115,7 +147,11 @@ export async function list(actor: Actor, input: ArticleListInput): Promise<Page<
   };
 }
 
-export async function byId(actor: Actor, input: ArticleByIdInput): Promise<ArticleDetail> {
+export async function byId({
+  actor,
+  input,
+  repository = articleRepository,
+}: ServiceParams<ArticleByIdInput>): Promise<ArticleDetail> {
   const siteId = resolveSiteFilter(actor, input.siteId);
   const row = await repository.findByArticleAndSite(input.articleId, siteId);
 
@@ -123,15 +159,17 @@ export async function byId(actor: Actor, input: ArticleByIdInput): Promise<Artic
     // Deliberately the same message whether the article does not exist or the
     // actor may not see it: distinguishing them would let a user enumerate the
     // other plant's catalogue by identifier.
-    throw new ArticleNotFoundError(input.articleId);
+    throw new NotFoundError(`Article introuvable : ${input.articleId}`, {
+      articleId: input.articleId,
+    });
   }
 
   // A filter cannot protect a lookup by id, so the row that came back is
   // checked against the actor's plant.
   assertCanAccessSite(actor, row.site.id);
 
-  const parametersByClass = await loadParametersByClass();
-  const parameters = parametersByClass.get(row.article.abcClass) ?? FALLBACK_PARAMETERS;
+  const parametersByClass = await loadParametersByClass(repository);
+  const parameters = parametersFor(parametersByClass, row.article.abcClass);
 
   const [lots, movements, thresholdHistory] = await Promise.all([
     repository.findLots(row.id),
@@ -164,6 +202,27 @@ export async function byId(actor: Actor, input: ArticleByIdInput): Promise<Artic
   };
 }
 
+/** The master-data fields this operation can change, and therefore audits. */
+const AUDITED_ARTICLE_FIELDS = [
+  "designation",
+  "vpe",
+  "leadTimeDays",
+  "abcClass",
+  "isActive",
+] as const;
+
+interface AuditableArticle {
+  readonly designation: string;
+  readonly vpe: number;
+  readonly leadTimeDays: number;
+  readonly abcClass: AbcClass;
+  readonly isActive: boolean;
+}
+
+function auditedFields(article: AuditableArticle): AuditPayload {
+  return Object.fromEntries(AUDITED_ARTICLE_FIELDS.map((field) => [field, article[field]]));
+}
+
 /**
  * Updates article master data.
  *
@@ -171,37 +230,54 @@ export async function byId(actor: Actor, input: ArticleByIdInput): Promise<Artic
  * What belongs here is the consequence: changing the VPE or the lead time
  * invalidates the stored thresholds, and the caller is told so rather than
  * being left with figures that no longer match the article they describe.
+ *
+ * The change is audited. Min, Max, VPE and lead time are the numbers every
+ * threshold in the application derives from, so "who changed this, and from
+ * what" has to be answerable months later — that is what `AuditLog` is for, and
+ * the repository writes it in the same transaction as the row.
  */
-export async function update(
-  _actor: Actor,
-  input: UpdateArticleInput,
-): Promise<{ articleId: string; thresholdsNeedRecalculation: boolean }> {
+export async function update({
+  actor,
+  input,
+  repository = articleRepository,
+}: ServiceParams<UpdateArticleInput>): Promise<{
+  articleId: string;
+  thresholdsNeedRecalculation: boolean;
+}> {
   const existing = await repository.findRawArticle(input.articleId);
 
   if (existing === null) {
-    throw new ArticleNotFoundError(input.articleId);
+    throw new NotFoundError(`Article introuvable : ${input.articleId}`, {
+      articleId: input.articleId,
+    });
   }
 
   const thresholdsNeedRecalculation =
     existing.leadTimeDays !== input.leadTimeDays || existing.abcClass !== input.abcClass;
 
-  await repository.update(input.articleId, {
+  const data = {
     designation: input.designation,
     vpe: input.vpe,
     leadTimeDays: input.leadTimeDays,
     abcClass: input.abcClass,
     isActive: input.isActive,
+  };
+
+  await repository.updateWithAudit({
+    articleId: input.articleId,
+    data,
+    audit: {
+      entity: "Article",
+      entityId: input.articleId,
+      action: "UPDATE",
+      // Both sides are recorded so a change can be explained without replaying
+      // the whole log, and narrowed to the fields this operation can touch —
+      // storing timestamps and ids would bury the two numbers that matter.
+      before: auditedFields(existing),
+      after: auditedFields(data),
+      actorId: actor.userId,
+    },
   });
 
   return { articleId: input.articleId, thresholdsNeedRecalculation };
-}
-
-/** Raised when an article is absent, or invisible to the caller. */
-export class ArticleNotFoundError extends Error {
-  readonly code = "ARTICLE_NOT_FOUND";
-
-  constructor(articleId: string) {
-    super(`Article introuvable : ${articleId}`);
-    this.name = "ArticleNotFoundError";
-  }
 }

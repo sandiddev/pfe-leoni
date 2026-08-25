@@ -162,6 +162,19 @@ export const api = [
       "no-restricted-imports": ["error", { patterns: [noClientImports] }],
     },
   },
+
+  // --- Tests may build the rows a repository would have returned -----------
+  //
+  // A service test stubs its repository, and a repository deals in Prisma
+  // payloads — `Decimal` thresholds, generated row types. Constructing those
+  // fixtures requires the types, so the Prisma ban is lifted here and only
+  // here. The UI ban stays: nothing in this package renders anything.
+  {
+    files: ["src/**/*.test.ts"],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [noClientImports] }],
+    },
+  },
 ];
 
 export default api;

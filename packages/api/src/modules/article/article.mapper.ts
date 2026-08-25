@@ -4,6 +4,7 @@ import type {
   StockMovementItem,
   ThresholdHistoryPoint,
 } from "@leoni/contracts";
+import type { MovementType, RecalculationTrigger } from "@leoni/core";
 import { assessStockItem } from "@leoni/core";
 import type { Prisma } from "@leoni/db";
 
@@ -23,9 +24,16 @@ import type { StockItemRow } from "./article.repository";
  * produced, not a second implementation living in a component.
  */
 
-/** Prisma `Decimal` (or a plain number) to a JavaScript number. */
-function toNumber(value: Prisma.Decimal | number | null): number {
-  if (value === null) return 0;
+/**
+ * Prisma `Decimal` (or a plain number) to a JavaScript number.
+ *
+ * No `null` case: every Decimal column this mapper reads is `NOT NULL` in the
+ * schema. A defensive `?? 0` here would be an untestable branch that also hides
+ * the day a genuinely nullable column starts flowing through — `coverageDays`
+ * on StockAlertSnapshot is one — where returning 0 would be a lie rather than a
+ * default: "no measured consumption" is not "zero days of cover".
+ */
+function toNumber(value: Prisma.Decimal | number): number {
   return typeof value === "number" ? value : value.toNumber();
 }
 
@@ -109,7 +117,7 @@ export function toLotItem(row: LotRow): StockLotItem {
 
 interface MovementRow {
   id: string;
-  type: string;
+  type: MovementType;
   quantity: number;
   occurredAt: Date;
   reference: string | null;
@@ -133,7 +141,7 @@ interface ThresholdHistoryRow {
   minThreshold: Prisma.Decimal;
   maxThreshold: Prisma.Decimal;
   safetyStock: Prisma.Decimal;
-  trigger: string;
+  trigger: RecalculationTrigger;
 }
 
 export function toThresholdHistoryPoint(row: ThresholdHistoryRow): ThresholdHistoryPoint {

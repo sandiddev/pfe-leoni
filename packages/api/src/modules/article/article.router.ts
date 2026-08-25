@@ -22,12 +22,12 @@ export const articleRouter = createTRPCRouter({
   /** Paginated article list with the computed alert and suggestion columns. */
   list: permissionProcedure("article:read")
     .input(articleListInputSchema)
-    .query(async ({ ctx, input }) => service.list(ctx.actor, input)),
+    .query(async ({ ctx, input }) => service.list({ actor: ctx.actor, input })),
 
   /** One article at one plant, with its lots, journal and threshold history. */
   byId: permissionProcedure("article:read")
     .input(articleByIdInputSchema)
-    .query(async ({ ctx, input }) => service.byId(ctx.actor, input)),
+    .query(async ({ ctx, input }) => service.byId({ actor: ctx.actor, input })),
 
   /**
    * Master data edit.
@@ -38,5 +38,5 @@ export const articleRouter = createTRPCRouter({
    */
   update: permissionProcedure("article:write")
     .input(updateArticleInputSchema)
-    .mutation(async ({ ctx, input }) => service.update(ctx.actor, input)),
+    .mutation(async ({ ctx, input }) => service.update({ actor: ctx.actor, input })),
 });

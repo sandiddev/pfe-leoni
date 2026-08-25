@@ -6,6 +6,8 @@ import {
   PERMISSIONS,
   REQUEST_STATUSES,
   ROLES,
+  TRANSITION_ACTIONS,
+  type TransitionAction,
   TRANSITIONS,
 } from "@leoni/core";
 
@@ -62,17 +64,18 @@ describe("French labels cover the whole domain", () => {
   });
 
   /**
-   * The action labels are keyed by the `action` identifier in the domain's
-   * transition table, which is a plain string — so the compiler cannot help.
-   * Adding a transition without wording its button is caught here instead.
+   * `TransitionAction` now types the label map, so a missing label fails to
+   * compile rather than at runtime. What the compiler still cannot check is
+   * that every action is *reachable* — an action declared in the union and
+   * labelled, but wired into no transition, is a button nobody can ever press.
    */
   it("labels every action reachable in the workflow", () => {
-    const actions = new Set<string>();
+    const actions = new Set<TransitionAction>();
     for (const transitions of Object.values(TRANSITIONS)) {
       for (const transition of transitions) actions.add(transition.action);
     }
 
-    expect(actions.size).toBeGreaterThan(0);
+    expect(actions.size).toBe(TRANSITION_ACTIONS.length);
     for (const action of actions) {
       expectUsableLabel(REQUEST_ACTION_LABELS_FR[action], `action "${action}"`);
     }

@@ -41,14 +41,64 @@ is on to catch the rest.
 
 ### Banned constructs
 
-| Banned                   | Instead                              | Why                                                                                                                                                                        |
-| ------------------------ | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `any`                    | `unknown` + narrowing                | `any` disables checking silently and spreads.                                                                                                                              |
-| `!` (non-null)           | a helper that throws with a message  | `required(value, "the LTN1 storekeeper")` tells you what was missing at 2 a.m.; `!` tells you nothing. Allowed in tests.                                                   |
-| `as` (except `as const`) | `satisfies`                          | A cast is a claim the compiler cannot verify. The one sanctioned exception is `toBrandedId`, documented in place.                                                          |
-| `enum`                   | `const` array + `(typeof X)[number]` | TS enums have surprising runtime semantics and do not tree-shake. The `ROLES` pattern in `core` gives the union _and_ an iterable list. Prisma 7 generates the same shape. |
-| default exports          | named exports                        | A default can be renamed at every import site, which defeats grep and rename-refactors. Next.js pages, layouts and `proxy.ts` are exempt — the framework requires them.    |
-| `export *`               | explicit re-exports                  | A barrel hides a package's public surface. `packages/core/src/index.ts` doubles as its API documentation because of this.                                                  |
+| Banned                                                 | Instead                              | Why                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `any`                                                  | `unknown` + narrowing                | `any` disables checking silently and spreads.                                                                                                                                                                                                                                                                                                                                                  |
+| `!` (non-null)                                         | a helper that throws with a message  | `required(value, "the LTN1 storekeeper")` tells you what was missing at 2 a.m.; `!` tells you nothing. Allowed in tests.                                                                                                                                                                                                                                                                       |
+| `as` (except `as const` and the widening `as unknown`) | `satisfies`, or a type guard         | A cast is a claim the compiler cannot verify. Enforced by `no-restricted-syntax` — `consistent-type-assertions` alone rejects only casts on object literals, which is how three of these accumulated. The sanctioned exceptions disable the rule in place: `toBrandedId` (a phantom type has nothing to check) and one test that deliberately breaks the type system to reach a runtime guard. |
+| `enum`                                                 | `const` array + `(typeof X)[number]` | TS enums have surprising runtime semantics and do not tree-shake. The `ROLES` pattern in `core` gives the union _and_ an iterable list. Prisma 7 generates the same shape.                                                                                                                                                                                                                     |
+| default exports                                        | named exports                        | A default can be renamed at every import site, which defeats grep and rename-refactors. Next.js pages, layouts and `proxy.ts` are exempt — the framework requires them.                                                                                                                                                                                                                        |
+| `export *`                                             | explicit re-exports                  | A barrel hides a package's public surface. `packages/core/src/index.ts` doubles as its API documentation because of this.                                                                                                                                                                                                                                                                      |
+
+### `process.env` lives in one package
+
+`@leoni/env` validates the environment at boot, so a missing or malformed variable stops the
+process instead of surfacing at the first request that needs it. A `no-restricted-syntax` rule
+enforces that nothing else reads it — the rule had been documented but unenforced, and four
+call sites had drifted, one of them defaulting the tRPC base URL to `localhost:3000` in a
+project whose dev server listens on 4300.
+
+Three exemptions, each commented in place:
+
+- **`process.env.NODE_ENV` in a client component.** Next.js inlines it at build time as a
+  constant, and t3-env structurally cannot hand a non-`NEXT_PUBLIC_` variable to a browser, so
+  there is no other way to ask. This is the only exemption in application code.
+- **`prisma.config.ts`, `next.config.ts`, `seed.ts`.** Each runs _before_ a validated
+  environment can exist — the first two are loaded by tooling, and the seed is a plain Node
+  process that populates the variables it then validates.
+- **`@leoni/env` itself**, which spreads the syntax bans _without_ the environment entries
+  rather than switching the whole rule off and losing the `as` and `enum` bans with it.
+
+Server code imports `env` from `@leoni/env`; client code imports `clientEnv` from
+`@leoni/env/client`, which validates the `NEXT_PUBLIC_*` variables standalone. The package
+index deliberately does not re-export `clientEnv`, so crossing that boundary has to be spelled
+out at the import site — it used to `import "./server"`, which meant any client component
+touching it pulled the server schema, and every secret named in it, into the module graph.
+
+### `process.env` lives in one package
+
+`@leoni/env` validates the environment at boot, so a missing or malformed variable stops the
+process instead of surfacing at the first request that needs it. A `no-restricted-syntax` rule
+enforces that nothing else reads it — the rule had been documented but unenforced, and four
+call sites had drifted, one of them defaulting the tRPC base URL to `localhost:3000` in a
+project whose dev server listens on 4300.
+
+Three exemptions, each commented in place:
+
+- **`process.env.NODE_ENV` in a client component.** Next.js inlines it at build time as a
+  constant, and t3-env structurally cannot hand a non-`NEXT_PUBLIC_` variable to a browser, so
+  there is no other way to ask. This is the only exemption in application code.
+- **`prisma.config.ts`, `next.config.ts`, `seed.ts`.** Each runs _before_ a validated
+  environment can exist — the first two are loaded by tooling, and the seed is a plain Node
+  process that populates the variables it then validates.
+- **`@leoni/env` itself**, which spreads the syntax bans _without_ the environment entries
+  rather than switching the whole rule off and losing the `as` and `enum` bans with it.
+
+Server code imports `env` from `@leoni/env`; client code imports `clientEnv` from
+`@leoni/env/client`, which validates the `NEXT_PUBLIC_*` variables standalone. The package
+index deliberately does not re-export `clientEnv`, so crossing that boundary has to be spelled
+out at the import site — it used to `import "./server"`, which meant any client component
+touching it pulled the server schema, and every secret named in it, into the module graph.
 
 ### Errors
 
@@ -58,6 +108,7 @@ Services throw `DomainError` subclasses from `@leoni/core`:
 DomainError
 ├── BusinessRuleError        an invariant the user could have satisfied
 ├── InvalidInputError        a value the domain cannot interpret
+├── NotFoundError            absent, or invisible to this actor
 ├── TransitionNotAllowedError a state change the workflow forbids
 └── ForbiddenActionError     the role lacks the permission
 ```
@@ -70,7 +121,11 @@ Anything that is not a recognised domain error becomes `INTERNAL_SERVER_ERROR` w
 message withheld — deliberately, so a Prisma constraint name or a connection string never
 reaches a browser.
 
-Never `throw new Error("string")` for a business rule.
+Never `throw new Error("string")` for a business rule, and never declare a local error class
+that does not extend `DomainError`. `article.service.ts` used to do exactly that for "article
+not found": `toTRPCError` did not recognise it, so a stale link surfaced to the storekeeper as
+`INTERNAL_SERVER_ERROR` with the French message deliberately withheld. The gap was in the
+hierarchy, not the service — if the error you need is missing, add it to `@leoni/core`.
 
 ---
 

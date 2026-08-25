@@ -51,5 +51,5 @@ export const PERMISSIONS = [
 export type Permission = (typeof PERMISSIONS)[number];
 
 export function isPermission(value: string): value is Permission {
-  return (PERMISSIONS as readonly string[]).includes(value);
+  return PERMISSIONS.some((permission) => permission === value);
 }

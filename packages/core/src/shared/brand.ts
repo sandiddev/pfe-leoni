@@ -29,5 +29,6 @@ export type UserId = Brand<string, "UserId">;
  */
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- naming the target brand is the entire purpose of this helper.
 export function toBrandedId<TId extends Brand<string, string>>(value: string): TId {
+  // eslint-disable-next-line no-restricted-syntax -- the one sanctioned assertion in the codebase: a brand is a phantom type, so there is nothing here that could be checked. See docs/conventions.md.
   return value as TId;
 }

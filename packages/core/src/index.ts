@@ -24,6 +24,18 @@ export {
   toBrandedId,
 } from "./shared/brand";
 export { clamp, roundThreshold, roundTo } from "./shared/rounding";
+export {
+  MOVEMENT_TYPES,
+  type MovementType,
+  NOTIFICATION_TYPES,
+  type NotificationType,
+  RECALCULATION_TRIGGERS,
+  type RecalculationTrigger,
+  REQUEST_PRIORITIES,
+  type RequestPriority,
+  SITE_TYPES,
+  type SiteType,
+} from "./shared/enums";
 
 // --- Errors ----------------------------------------------------------------
 export {
@@ -31,6 +43,7 @@ export {
   DomainError,
   ForbiddenActionError,
   InvalidInputError,
+  NotFoundError,
   TransitionNotAllowedError,
   isDomainError,
 } from "./errors/domain-error";
@@ -68,6 +81,11 @@ export {
   isAtLeastAsSevere,
   resolveAlertLevel,
 } from "./replenishment/alert-level";
+export {
+  type ClassParameters,
+  DEFAULT_CLASS_PARAMETERS,
+  defaultParametersForClass,
+} from "./replenishment/class-parameters";
 export {
   AVERAGING_WINDOWS,
   type AveragingWindowDays,
@@ -125,4 +143,10 @@ export {
   isTerminalStatus,
   nominalStepIndex,
 } from "./workflow/request-status";
-export { TRANSITIONS, type TransitionDefinition } from "./workflow/transitions";
+export {
+  ACTION_PERMISSIONS,
+  TRANSITION_ACTIONS,
+  TRANSITIONS,
+  type TransitionAction,
+  type TransitionDefinition,
+} from "./workflow/transitions";

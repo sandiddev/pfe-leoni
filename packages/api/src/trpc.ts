@@ -8,6 +8,7 @@ import {
   ForbiddenActionError,
   InvalidInputError,
   isDomainError,
+  NotFoundError,
   type Permission,
   type Role,
   TransitionNotAllowedError,
@@ -70,6 +71,9 @@ function toTRPCError(error: unknown): TRPCError {
   if (error instanceof TransitionNotAllowedError) {
     // The request is well-formed; it is the current state that forbids it.
     return new TRPCError({ code: "CONFLICT", message: error.message, cause: error });
+  }
+  if (error instanceof NotFoundError) {
+    return new TRPCError({ code: "NOT_FOUND", message: error.message, cause: error });
   }
   if (error instanceof InvalidInputError) {
     return new TRPCError({ code: "BAD_REQUEST", message: error.message, cause: error });

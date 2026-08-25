@@ -2,6 +2,23 @@ import { defaultShouldDehydrateQuery, QueryClient } from "@tanstack/react-query"
 import superjson from "superjson";
 
 /**
+ * The HTTP status tRPC attached to an error, when it attached one.
+ *
+ * A narrowing function rather than a cast: `retry` receives `Error`, and the
+ * `data.httpStatus` that tRPC adds is not on that type. Asserting the shape
+ * would claim something no one has checked — a plain `Error` thrown by a link,
+ * or a network failure, has no `data` at all.
+ */
+function httpStatusOf(error: unknown): number | null {
+  if (typeof error !== "object" || error === null || !("data" in error)) return null;
+
+  const { data } = error;
+  if (typeof data !== "object" || data === null || !("httpStatus" in data)) return null;
+
+  return typeof data.httpStatus === "number" ? data.httpStatus : null;
+}
+
+/**
  * The shared React Query configuration.
  *
  * Defined once and used by both the server and the browser so that a query
@@ -25,7 +42,7 @@ export function createQueryClient(): QueryClient {
         retry: (failureCount, error) => {
           // Never retry an authorisation failure: the answer will not change,
           // and three more attempts only delay the redirect to the login page.
-          const status = (error as { data?: { httpStatus?: number } }).data?.httpStatus;
+          const status = httpStatusOf(error);
           if (status === 401 || status === 403 || status === 404) return false;
           return failureCount < 2;
         },

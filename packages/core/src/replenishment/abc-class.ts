@@ -11,7 +11,7 @@ export const ABC_CLASSES = ["A", "B", "C"] as const;
 export type AbcClass = (typeof ABC_CLASSES)[number];
 
 export function isAbcClass(value: string): value is AbcClass {
-  return (ABC_CLASSES as readonly string[]).includes(value);
+  return ABC_CLASSES.some((abcClass) => abcClass === value);
 }
 
 /** Cumulative share of total consumption value at which each class ends. */
