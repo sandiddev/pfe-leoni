@@ -17,6 +17,7 @@ import {
   resolveAlertLevel,
   type Role,
 } from "@leoni/core";
+import { env } from "@leoni/env";
 
 import { db } from "./client";
 import { buildCatalogue, type SeedArticle } from "./seed/catalogue";
@@ -214,7 +215,11 @@ async function main(): Promise<void> {
   console.log(`  sites: 2, storage locations: ${String(locationCodes.length * 2)}`);
 
   // --- Users ---------------------------------------------------------------
-  const password = process.env["SEED_USER_PASSWORD"] ?? "Leoni2026!";
+  // From the validated environment rather than a second `?? "Leoni2026!"`:
+  // @leoni/env already declares this variable and its default, and a duplicated
+  // default is a password that can differ between the seed and the .env.example
+  // the demo accounts are documented in.
+  const password = env.SEED_USER_PASSWORD;
   // Hashed with better-auth's own hasher so the seeded accounts can actually
   // sign in through the normal login form, rather than being rows that look
   // right but fail authentication.

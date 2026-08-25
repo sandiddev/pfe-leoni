@@ -7,6 +7,7 @@ import { type ReactNode, useState } from "react";
 import superjson from "superjson";
 
 import type { AppRouter } from "@leoni/api";
+import { clientEnv } from "@leoni/env/client";
 
 import { createQueryClient } from "./query-client";
 
@@ -29,9 +30,18 @@ function getQueryClient(): QueryClient {
   return browserQueryClient;
 }
 
+/**
+ * Where the browser should send tRPC calls.
+ *
+ * In the browser, the origin the page was actually served from — which keeps
+ * working behind a reverse proxy or when a colleague opens the app by the
+ * host's LAN address. Server-side rendering has no `window`, so it falls back
+ * to the configured application URL. That used to be a hardcoded
+ * `localhost:3000`, which was simply wrong: the dev server listens on 4300.
+ */
 function getBaseUrl(): string {
   if (typeof window !== "undefined") return window.location.origin;
-  return `http://localhost:${process.env["PORT"] ?? "3000"}`;
+  return clientEnv.NEXT_PUBLIC_APP_URL;
 }
 
 export function TRPCReactProvider({ children }: { readonly children: ReactNode }) {
@@ -45,6 +55,9 @@ export function TRPCReactProvider({ children }: { readonly children: ReactNode }
         loggerLink({
           // Noisy in production; invaluable when a storekeeper reports that a
           // button "did nothing".
+          // `process.env.NODE_ENV` is the one sanctioned read outside @leoni/env:
+          // it is a build-time constant Next.js inlines, not configuration, and
+          // t3-env cannot expose a non-NEXT_PUBLIC_ variable to the browser.
           enabled: (op) =>
             process.env.NODE_ENV === "development" ||
             (op.direction === "down" && op.result instanceof Error),

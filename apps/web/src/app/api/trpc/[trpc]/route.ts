@@ -2,6 +2,7 @@ import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import type { NextRequest } from "next/server";
 
 import { appRouter, createContext } from "@leoni/api";
+import { env } from "@leoni/env";
 
 /**
  * The HTTP entry point for the API.
@@ -10,7 +11,7 @@ import { appRouter, createContext } from "@leoni/api";
  * exists for the browser. Both paths run the same router with the same context
  * factory, so an authorisation rule cannot apply on one and not the other.
  */
-const isDevelopment = process.env.NODE_ENV === "development";
+const isDevelopment = env.NODE_ENV === "development";
 
 function handler(request: NextRequest): Promise<Response> {
   return fetchRequestHandler({
