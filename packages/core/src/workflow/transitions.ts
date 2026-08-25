@@ -1,3 +1,4 @@
+import type { Permission } from "../access/permission";
 import type { Role } from "../access/role";
 import type { RequestStatus } from "./request-status";
 
@@ -14,13 +15,77 @@ import type { RequestStatus } from "./request-status";
  * a rejection or an LTN4 shortage that nobody has to explain is exactly the
  * opacity this project exists to remove.
  */
+/**
+ * Every action the workflow can perform.
+ *
+ * A union rather than a bare `string` so that the compiler — not a test —
+ * catches a transition whose action has no French label and no permission.
+ * `create` is deliberately absent: it is the label on the history row that
+ * records creation, not a transition out of a state.
+ */
+export const TRANSITION_ACTIONS = [
+  "submit",
+  "approve",
+  "reject",
+  "cancel",
+  "transmit",
+  "startPreparation",
+  "prepareAvailable",
+  "resumePreparation",
+  "declarePartial",
+  "declareStockOut",
+  "markReady",
+  "ship",
+  "markInTransit",
+  "confirmReceipt",
+  "close",
+] as const;
+
+export type TransitionAction = (typeof TRANSITION_ACTIONS)[number];
+
 export interface TransitionDefinition {
   readonly to: RequestStatus;
   /** Stable identifier for the action; French wording lives in @leoni/contracts. */
-  readonly action: string;
+  readonly action: TransitionAction;
   readonly allowedRoles: readonly Role[];
   readonly requiresReason: boolean;
 }
+
+/**
+ * The permission each action requires.
+ *
+ * The workflow is guarded twice: a tRPC procedure declares a permission, and
+ * the transition table lists the roles allowed to perform the action. Those are
+ * two statements of the same rule, and nothing made them agree — a role could
+ * be added to `allowedRoles` here while its procedure kept refusing it, or
+ * worse, the reverse.
+ *
+ * A request router reads this map instead of restating the permission per
+ * procedure, and `transitions.test.ts` asserts that every role listed below
+ * actually holds the permission its action needs.
+ *
+ * `reject` maps to `request:approve` on purpose: approving and refusing are the
+ * same authority — the decision of the LTN1 warehouse manager — exercised in
+ * opposite directions. A separate `request:reject` would suggest a role could
+ * hold one without the other, which the process does not allow.
+ */
+export const ACTION_PERMISSIONS: Readonly<Record<TransitionAction, Permission>> = {
+  submit: "request:create",
+  approve: "request:approve",
+  reject: "request:approve",
+  cancel: "request:cancel",
+  transmit: "request:transmit",
+  startPreparation: "request:prepare",
+  prepareAvailable: "request:prepare",
+  resumePreparation: "request:prepare",
+  declarePartial: "request:prepare",
+  declareStockOut: "request:prepare",
+  markReady: "request:prepare",
+  ship: "request:ship",
+  markInTransit: "request:ship",
+  confirmReceipt: "request:receive",
+  close: "request:close",
+};
 
 /** Roles permitted to abandon a request before LTN4 has acted on it. */
 const LTN1_REQUESTERS: readonly Role[] = ["LTN1_STOREKEEPER", "ADMIN"];

@@ -143,4 +143,10 @@ export {
   isTerminalStatus,
   nominalStepIndex,
 } from "./workflow/request-status";
-export { TRANSITIONS, type TransitionDefinition } from "./workflow/transitions";
+export {
+  ACTION_PERMISSIONS,
+  TRANSITION_ACTIONS,
+  TRANSITIONS,
+  type TransitionAction,
+  type TransitionDefinition,
+} from "./workflow/transitions";

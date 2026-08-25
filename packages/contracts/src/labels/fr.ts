@@ -1,4 +1,11 @@
-import type { AbcClass, AlertLevel, Permission, RequestStatus, Role } from "@leoni/core";
+import type {
+  AbcClass,
+  AlertLevel,
+  Permission,
+  RequestStatus,
+  Role,
+  TransitionAction,
+} from "@leoni/core";
 
 /**
  * French vocabulary for every enumerated value in the domain.
@@ -60,7 +67,12 @@ export const REQUEST_STATUS_LABELS_FR: Readonly<Record<RequestStatus, string>> =
  * transition table. The button on screen and the transition the server will
  * accept therefore always describe the same operation.
  */
-export const REQUEST_ACTION_LABELS_FR: Readonly<Record<string, string>> = {
+/**
+ * Keyed by the domain's `TransitionAction`, plus `create` for the history row
+ * that records creation. Typed rather than `Record<string, string>` so that
+ * adding a transition without wording its button fails to compile.
+ */
+export const REQUEST_ACTION_LABELS_FR: Readonly<Record<TransitionAction | "create", string>> = {
   create: "Creer",
   submit: "Soumettre a validation",
   approve: "Valider",
