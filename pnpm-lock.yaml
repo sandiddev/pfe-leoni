@@ -12,9 +12,6 @@ catalogs:
     '@next/eslint-plugin-next':
       specifier: 16.3.2
       version: 16.3.2
-    '@playwright/test':
-      specifier: 1.62.1
-      version: 1.62.1
     '@prisma/adapter-pg':
       specifier: 7.9.1
       version: 7.9.1
@@ -207,9 +204,6 @@ importers:
       '@leoni/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tooling/tsconfig
-      '@playwright/test':
-        specifier: 'catalog:'
-        version: 1.62.1
       '@tailwindcss/postcss':
         specifier: 'catalog:'
         version: 4.3.3
@@ -4741,6 +4735,7 @@ snapshots:
   '@playwright/test@1.62.1':
     dependencies:
       playwright: 1.62.1
+    optional: true
 
   '@prisma/adapter-pg@7.9.1':
     dependencies:
@@ -7080,13 +7075,15 @@ snapshots:
       exsolve: 1.1.1
       pathe: 2.0.3
 
-  playwright-core@1.62.1: {}
+  playwright-core@1.62.1:
+    optional: true
 
   playwright@1.62.1:
     dependencies:
       playwright-core: 1.62.1
     optionalDependencies:
       fsevents: 2.3.2
+    optional: true
 
   postcss@8.5.23:
     dependencies:

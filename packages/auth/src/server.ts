@@ -74,11 +74,15 @@ export const auth = betterAuth({
     // outlives the shift is a session someone else inherits.
     expiresIn: 60 * 60 * 8,
     updateAge: 60 * 60,
-    cookieCache: {
-      // Avoids a database round trip on every request for the common case.
-      enabled: true,
-      maxAge: 5 * 60,
-    },
+
+    // No `cookieCache`. It saved a database round trip per request by trusting
+    // the signed cookie for up to five minutes — including the `isActive` flag
+    // that `createContext` and the authenticated layout both read. Those two
+    // places promise a deactivated account loses access immediately, and with
+    // the cache that promise was false for five minutes: five minutes in which
+    // a dismissed employee keeps recording stock movements under their own
+    // name. `isActive` is an authorisation input, so it is re-read every time.
+    // The cost is one indexed primary-key lookup per request.
   },
 
   advanced: {

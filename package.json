@@ -17,7 +17,6 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:watch": "turbo run test:watch",
-    "test:e2e": "pnpm --filter @leoni/web test:e2e",
     "format": "prettier --write \"**/*.{ts,tsx,mjs,md,json,css,yaml,yml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,mjs,md,json,css,yaml,yml}\"",
     "db:generate": "pnpm --filter @leoni/db db:generate",

@@ -9,7 +9,6 @@
     "start": "next start --port 4300",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test",
     "clean": "rm -rf .turbo .next node_modules *.tsbuildinfo"
   },
   "dependencies": {
@@ -33,7 +32,6 @@
   "devDependencies": {
     "@leoni/eslint-config": "workspace:*",
     "@leoni/tsconfig": "workspace:*",
-    "@playwright/test": "catalog:",
     "@tailwindcss/postcss": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
