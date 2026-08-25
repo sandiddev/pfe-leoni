@@ -48,7 +48,9 @@ export const auth = betterAuth({
     // model here makes it look for `db.User` and report "User not found".
     additionalFields: {
       role: {
-        type: ROLES as unknown as string[],
+        // A mutable copy: better-auth types this field as `string[]`, and ROLES is
+        // a readonly tuple. Spreading satisfies it without asserting anything.
+        type: [...ROLES],
         required: true,
         defaultValue: "LTN1_STOREKEEPER",
         input: false,

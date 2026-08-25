@@ -32,12 +32,19 @@ function createPrismaClient(): PrismaClient {
   });
 }
 
-const globalForPrisma = globalThis as unknown as {
-  leoniPrisma: PrismaClient | undefined;
-};
+/**
+ * Declaring the slot rather than casting `globalThis` to a shape it does not
+ * have. The cast was a claim the compiler could not check; this is a statement
+ * the compiler enforces at both the read and the write below.
+ */
+declare global {
+  // `var` is required here: only `var` declarations are hoisted onto
+  // globalThis, so `let` or `const` would not describe the slot being used.
+  var leoniPrisma: PrismaClient | undefined;
+}
 
-export const db: PrismaClient = globalForPrisma.leoniPrisma ?? createPrismaClient();
+export const db: PrismaClient = globalThis.leoniPrisma ?? createPrismaClient();
 
 if (env.NODE_ENV !== "production") {
-  globalForPrisma.leoniPrisma = db;
+  globalThis.leoniPrisma = db;
 }
