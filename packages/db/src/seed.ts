@@ -6,9 +6,13 @@ import { createLocalAccountIssuer } from "better-auth/db";
 import { randomUUID } from "node:crypto";
 
 import {
-  type AbcClass,
+  ABC_CLASSES,
   type AlertLevel,
   assessStockItem,
+  DEFAULT_AVERAGING_WINDOW_DAYS,
+  DEFAULT_CLASS_PARAMETERS,
+  DEFAULT_WARNING_MARGIN_RATIO,
+  defaultParametersForClass,
   type RequestStatus,
   resolveAlertLevel,
   type Role,
@@ -70,24 +74,10 @@ function required<T>(value: T | undefined, what: string): T {
   return value;
 }
 
-// ---------------------------------------------------------------------------
-// Parameters per ABC class (brief section 3.4)
-// ---------------------------------------------------------------------------
-
-interface ClassParameter {
-  readonly abcClass: AbcClass;
-  readonly safetyDays: number;
-  readonly extraCoverageDays: number;
-}
-
-const CLASS_PARAMETERS: readonly ClassParameter[] = [
-  { abcClass: "A", safetyDays: 2, extraCoverageDays: 3 },
-  { abcClass: "B", safetyDays: 1.5, extraCoverageDays: 5 },
-  { abcClass: "C", safetyDays: 1, extraCoverageDays: 10 },
-];
-
-const AVERAGING_WINDOW_DAYS = 30;
-const WARNING_MARGIN_RATIO = 0.2;
+// The per-class parameters come from @leoni/core (section 3.4). The seed writes
+// the defaults into the database rather than restating them: a seeded
+// installation must start from exactly the values the application falls back to,
+// or the first recalculation silently moves every threshold.
 
 // ---------------------------------------------------------------------------
 // Demo accounts — one per role (brief section 4)
@@ -159,7 +149,7 @@ function stockForLevel(level: AlertLevel, min: number, max: number): number {
       return Math.max(1, Math.round(min * (0.3 + random() * 0.7)));
     case "WARNING":
       // Inside the warning band: above Min, at or below Min x 1.2.
-      return Math.round(min * (1 + random() * WARNING_MARGIN_RATIO)) + 1;
+      return Math.round(min * (1 + random() * DEFAULT_WARNING_MARGIN_RATIO)) + 1;
     case "NORMAL":
       return Math.round(max * (0.75 + random() * 0.3));
   }
@@ -270,20 +260,19 @@ async function main(): Promise<void> {
 
   // --- Replenishment parameters (section 3.4) ------------------------------
   await db.replenishmentParameter.createMany({
-    data: CLASS_PARAMETERS.map((parameter) => ({
-      abcClass: parameter.abcClass,
-      safetyDays: parameter.safetyDays,
-      extraCoverageDays: parameter.extraCoverageDays,
-      averagingWindowDays: AVERAGING_WINDOW_DAYS,
-      warningMarginRatio: WARNING_MARGIN_RATIO,
+    data: ABC_CLASSES.map((abcClass) => ({
+      abcClass,
+      ...DEFAULT_CLASS_PARAMETERS[abcClass],
     })),
   });
 
-  console.log(`  replenishment parameters: ${String(CLASS_PARAMETERS.length)} class defaults`);
+  console.log(`  replenishment parameters: ${String(ABC_CLASSES.length)} class defaults`);
 
   // --- Articles, stock, movements ------------------------------------------
   const catalogue = buildCatalogue(150);
-  const parametersByClass = new Map(CLASS_PARAMETERS.map((p) => [p.abcClass, p]));
+  const parametersByClass = new Map(
+    ABC_CLASSES.map((abcClass) => [abcClass, defaultParametersForClass(abcClass)]),
+  );
 
   interface SeededStock {
     readonly stockItemId: string;
@@ -323,7 +312,7 @@ async function main(): Promise<void> {
       safetyDays: parameter.safetyDays,
       extraCoverageDays: parameter.extraCoverageDays,
       vpe: seedArticle.vpe,
-      warningMarginRatio: WARNING_MARGIN_RATIO,
+      warningMarginRatio: defaultParametersForClass(seedArticle.abcClass).warningMarginRatio,
     });
 
     const { min, max, safetyStock } = assessment.thresholds;
@@ -337,7 +326,7 @@ async function main(): Promise<void> {
     const ltn1Level = resolveAlertLevel({
       currentStock,
       min,
-      warningMarginRatio: WARNING_MARGIN_RATIO,
+      warningMarginRatio: defaultParametersForClass(seedArticle.abcClass).warningMarginRatio,
     });
 
     // --- LTN1: the consuming plant ---
@@ -401,7 +390,7 @@ async function main(): Promise<void> {
         alertLevel: resolveAlertLevel({
           currentStock: ltn4Stock,
           min: min * 2,
-          warningMarginRatio: WARNING_MARGIN_RATIO,
+          warningMarginRatio: defaultParametersForClass(seedArticle.abcClass).warningMarginRatio,
         }),
         averageDailyConsumption: seedArticle.dailyConsumption,
         minThreshold: min * 2,
@@ -445,7 +434,7 @@ async function main(): Promise<void> {
       reference: string;
     }[] = [];
 
-    for (let day = AVERAGING_WINDOW_DAYS; day >= 1; day -= 1) {
+    for (let day = DEFAULT_AVERAGING_WINDOW_DAYS; day >= 1; day -= 1) {
       // Consumption varies day to day; a perfectly flat history would make the
       // averaging window meaningless and the variability argument for the
       // safety stock impossible to illustrate.
@@ -500,7 +489,7 @@ async function main(): Promise<void> {
             leadTimeDays: stock.article.leadTimeDays,
             safetyDays: parameter.safetyDays,
             extraCoverageDays: parameter.extraCoverageDays,
-            averagingWindowDays: AVERAGING_WINDOW_DAYS,
+            averagingWindowDays: parameter.averagingWindowDays,
           },
           trigger: dayOffset === 1 ? "SCHEDULED" : "PARAMETER_CHANGE",
           computedAt: daysAgo(dayOffset),
@@ -682,8 +671,8 @@ async function main(): Promise<void> {
         currentStock: line.currentStock,
         averageDailyConsumption: line.article.dailyConsumption,
         leadTimeDays: line.article.leadTimeDays,
-        safetyDays: parametersByClass.get(line.article.abcClass)?.safetyDays ?? 1,
-        extraCoverageDays: parametersByClass.get(line.article.abcClass)?.extraCoverageDays ?? 10,
+        safetyDays: defaultParametersForClass(line.article.abcClass).safetyDays,
+        extraCoverageDays: defaultParametersForClass(line.article.abcClass).extraCoverageDays,
         vpe: line.article.vpe,
       });
 
@@ -768,7 +757,7 @@ async function main(): Promise<void> {
       const level = resolveAlertLevel({
         currentStock: historicalStock,
         min: stock.min,
-        warningMarginRatio: WARNING_MARGIN_RATIO,
+        warningMarginRatio: defaultParametersForClass(stock.article.abcClass).warningMarginRatio,
       });
 
       snapshots.push({

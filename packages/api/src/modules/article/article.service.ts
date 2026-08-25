@@ -7,9 +7,12 @@ import type {
   UpdateArticleInput,
 } from "@leoni/contracts";
 import {
+  ABC_CLASSES,
+  type AbcClass,
+  type ClassParameters,
   computeLegacyThresholds,
   daysOfCoverage,
-  DEFAULT_WARNING_MARGIN_RATIO,
+  defaultParametersForClass,
   NotFoundError,
 } from "@leoni/core";
 
@@ -29,50 +32,53 @@ import * as repository from "./article.repository";
 const MOVEMENT_HISTORY_LIMIT = 25;
 const THRESHOLD_HISTORY_LIMIT = 30;
 
-interface ParameterSet {
-  readonly safetyDays: number;
-  readonly extraCoverageDays: number;
-  readonly warningMarginRatio: number;
-}
-
-const FALLBACK_PARAMETERS: ParameterSet = {
-  safetyDays: 1,
-  extraCoverageDays: 10,
-  warningMarginRatio: DEFAULT_WARNING_MARGIN_RATIO,
-};
-
 /**
  * Loads the tuning parameters for every ABC class once per request.
  *
  * The alternative — looking them up per article — would issue one query per row
  * on a 150-row page. There are exactly three classes, so they are fetched once
  * and shared.
+ *
+ * A class with no row falls back to `DEFAULT_CLASS_PARAMETERS`, which is the
+ * only place those defaults are written. The map is total over `ABC_CLASSES`,
+ * so callers index it without a fallback of their own — three call sites
+ * previously each carried one, and one of them disagreed with the other two.
  */
-async function loadParametersByClass(): Promise<Map<string, ParameterSet>> {
-  const classes = ["A", "B", "C"] as const;
+async function loadParametersByClass(): Promise<ReadonlyMap<AbcClass, ClassParameters>> {
   const parameters = await Promise.all(
-    classes.map(async (abcClass) => repository.findParameterForClass(abcClass)),
+    ABC_CLASSES.map(async (abcClass) => ({
+      abcClass,
+      row: await repository.findParameterForClass(abcClass),
+    })),
   );
 
-  const byClass = new Map<string, ParameterSet>();
-
-  for (const [index, parameter] of parameters.entries()) {
-    const abcClass = classes[index];
-    if (abcClass === undefined) continue;
-
-    byClass.set(
+  return new Map(
+    parameters.map(({ abcClass, row }) => [
       abcClass,
-      parameter === null
-        ? FALLBACK_PARAMETERS
+      row === null
+        ? defaultParametersForClass(abcClass)
         : {
-            safetyDays: parameter.safetyDays.toNumber(),
-            extraCoverageDays: parameter.extraCoverageDays.toNumber(),
-            warningMarginRatio: parameter.warningMarginRatio.toNumber(),
+            safetyDays: row.safetyDays.toNumber(),
+            extraCoverageDays: row.extraCoverageDays.toNumber(),
+            averagingWindowDays: row.averagingWindowDays,
+            warningMarginRatio: row.warningMarginRatio.toNumber(),
           },
-    );
-  }
+    ]),
+  );
+}
 
-  return byClass;
+/**
+ * Reads a class out of the map built above.
+ *
+ * The map is total, but `Map.get` is typed as possibly-undefined and there is
+ * no honest way to tell the compiler otherwise. Narrowing here — once, with the
+ * same defaults as the loader — beats a `!` at each call site.
+ */
+function parametersFor(
+  byClass: ReadonlyMap<AbcClass, ClassParameters>,
+  abcClass: AbcClass,
+): ClassParameters {
+  return byClass.get(abcClass) ?? defaultParametersForClass(abcClass);
 }
 
 export async function list(actor: Actor, input: ArticleListInput): Promise<Page<ArticleListItem>> {
@@ -90,7 +96,7 @@ export async function list(actor: Actor, input: ArticleListInput): Promise<Page<
   const page = hasMore ? rows.slice(0, input.limit) : rows;
 
   const items = page.map((row) => {
-    const parameters = parametersByClass.get(row.article.abcClass) ?? FALLBACK_PARAMETERS;
+    const parameters = parametersFor(parametersByClass, row.article.abcClass);
     return mapper.toListItem({
       row,
       safetyDays: parameters.safetyDays,
@@ -138,7 +144,7 @@ export async function byId(actor: Actor, input: ArticleByIdInput): Promise<Artic
   assertCanAccessSite(actor, row.site.id);
 
   const parametersByClass = await loadParametersByClass();
-  const parameters = parametersByClass.get(row.article.abcClass) ?? FALLBACK_PARAMETERS;
+  const parameters = parametersFor(parametersByClass, row.article.abcClass);
 
   const [lots, movements, thresholdHistory] = await Promise.all([
     repository.findLots(row.id),

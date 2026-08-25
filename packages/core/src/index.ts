@@ -70,6 +70,11 @@ export {
   resolveAlertLevel,
 } from "./replenishment/alert-level";
 export {
+  type ClassParameters,
+  DEFAULT_CLASS_PARAMETERS,
+  defaultParametersForClass,
+} from "./replenishment/class-parameters";
+export {
   AVERAGING_WINDOWS,
   type AveragingWindowDays,
   type ConsumptionSample,

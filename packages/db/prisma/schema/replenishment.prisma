@@ -23,17 +23,22 @@ model ReplenishmentParameter {
   article   Article? @relation(fields: [articleId], references: [id], onDelete: Cascade)
 
   /// Margin against consumption variability, in days of consumption.
-  /// Defaults per class (section 3.4): A = 2, B = 1.5, C = 1.
+  /// Per-class defaults live in `DEFAULT_CLASS_PARAMETERS` (@leoni/core) — the
+  /// single source of truth. The column default below only applies to an INSERT
+  /// that omits the field, which no code path does; `parameter-parity.test.ts`
+  /// keeps it from drifting into a value no class uses.
   safetyDays        Decimal @default(1) @db.Decimal(6, 2)
 
   /// Coverage restored on top of the minimum.
-  /// Defaults per class (section 3.4): A = 3, B = 5, C = 10.
+  /// See `DEFAULT_CLASS_PARAMETERS` in @leoni/core for the per-class values.
   extraCoverageDays Decimal @default(5) @db.Decimal(6, 2)
 
   /// Window for the rolling consumption average: 7, 30 or 90 days.
+  /// `AVERAGING_WINDOWS` in @leoni/core is the permitted set.
   averagingWindowDays Int @default(30)
 
   /// How far above Min the early warning fires, as a fraction of Min.
+  /// Mirrors `DEFAULT_WARNING_MARGIN_RATIO` in @leoni/core.
   warningMarginRatio Decimal @default(0.2) @db.Decimal(4, 3)
 
   createdAt DateTime @default(now())
