@@ -31,6 +31,7 @@ export {
   DomainError,
   ForbiddenActionError,
   InvalidInputError,
+  NotFoundError,
   TransitionNotAllowedError,
   isDomainError,
 } from "./errors/domain-error";

@@ -6,7 +6,12 @@ import type {
   Page,
   UpdateArticleInput,
 } from "@leoni/contracts";
-import { computeLegacyThresholds, daysOfCoverage, DEFAULT_WARNING_MARGIN_RATIO } from "@leoni/core";
+import {
+  computeLegacyThresholds,
+  daysOfCoverage,
+  DEFAULT_WARNING_MARGIN_RATIO,
+  NotFoundError,
+} from "@leoni/core";
 
 import type { Actor } from "../../context";
 import { assertCanAccessSite, resolveSiteFilter } from "../../middlewares/site-scope";
@@ -123,7 +128,9 @@ export async function byId(actor: Actor, input: ArticleByIdInput): Promise<Artic
     // Deliberately the same message whether the article does not exist or the
     // actor may not see it: distinguishing them would let a user enumerate the
     // other plant's catalogue by identifier.
-    throw new ArticleNotFoundError(input.articleId);
+    throw new NotFoundError(`Article introuvable : ${input.articleId}`, {
+      articleId: input.articleId,
+    });
   }
 
   // A filter cannot protect a lookup by id, so the row that came back is
@@ -179,7 +186,9 @@ export async function update(
   const existing = await repository.findRawArticle(input.articleId);
 
   if (existing === null) {
-    throw new ArticleNotFoundError(input.articleId);
+    throw new NotFoundError(`Article introuvable : ${input.articleId}`, {
+      articleId: input.articleId,
+    });
   }
 
   const thresholdsNeedRecalculation =
@@ -194,14 +203,4 @@ export async function update(
   });
 
   return { articleId: input.articleId, thresholdsNeedRecalculation };
-}
-
-/** Raised when an article is absent, or invisible to the caller. */
-export class ArticleNotFoundError extends Error {
-  readonly code = "ARTICLE_NOT_FOUND";
-
-  constructor(articleId: string) {
-    super(`Article introuvable : ${articleId}`);
-    this.name = "ArticleNotFoundError";
-  }
 }

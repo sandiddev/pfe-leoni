@@ -33,6 +33,17 @@ export class InvalidInputError extends DomainError {
   override readonly code = "INVALID_INPUT";
 }
 
+/**
+ * The entity the caller named does not exist, or is invisible to them.
+ *
+ * The two cases share one error deliberately. Distinguishing "no such article"
+ * from "not your plant" would let an LTN4 user enumerate LTN1's catalogue by
+ * identifier, one guess at a time.
+ */
+export class NotFoundError extends DomainError {
+  override readonly code = "NOT_FOUND";
+}
+
 /** A request was moved along a path the workflow does not allow. */
 export class TransitionNotAllowedError extends DomainError {
   override readonly code = "TRANSITION_NOT_ALLOWED";
