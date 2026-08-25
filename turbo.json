@@ -34,14 +34,14 @@
       "persistent": true
     },
     "lint": {
-      "dependsOn": ["^topo", "^db:generate"]
+      "dependsOn": ["^topo", "^db:generate", "db:generate"]
     },
     "typecheck": {
-      "dependsOn": ["^build", "^db:generate"]
+      "dependsOn": ["^db:generate", "db:generate"]
     },
     "test": {
-      "dependsOn": ["^build"],
-      "outputs": ["coverage/**"]
+      "dependsOn": ["^db:generate", "db:generate"],
+      "env": ["TEST_DATABASE_URL"]
     },
     "test:watch": {
       "cache": false,
