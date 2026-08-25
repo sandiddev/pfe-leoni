@@ -331,14 +331,22 @@ already being violated.
 Convention only — nothing enforces these, so they are on you:
 
 - comments explain _why_, never _what_;
-- French for user-visible strings (the label maps are typed, but a hardcoded string in JSX is
-  invisible to lint);
+- **French for user-visible strings.** The label maps are typed, so an enum without wording
+  fails to compile — but a string written straight into JSX is invisible to lint. A rule
+  banning bare JSX text was considered and rejected: it fires on punctuation and separators,
+  and a rule that trains people to write `eslint-disable` teaches the opposite of the lesson;
 - naming (`PascalCase` / `camelCase` / `SCREAMING_SNAKE` / `kebab-case`);
-- one responsibility per file.
+- one responsibility per file;
+- whether a test asserts anything worth asserting. The coverage gates count lines.
 
-**The hook is not a merge gate.** It constrains Claude Code, not a human with a terminal, and
-nothing here stops a violation reaching `origin/main`. A GitHub Actions workflow running
-`pnpm typecheck && pnpm lint && pnpm test` on Node 24 is one file, if that gate is wanted.
+**There is deliberately no CI.** Enforcement is agent-local: the hooks constrain Claude Code,
+and nothing stops a hand edit — or an agent that simply never runs the checks — from reaching
+`origin/main`. That was a considered decision, not an oversight. If it is ever revisited, the
+whole gate is one file: a workflow running `pnpm typecheck && pnpm lint && pnpm test` on
+Node 24, plus a Postgres service for `pnpm db:check`.
+
+So: the architecture is now very hard to get wrong, and craft is still a human judgement.
+Both halves of that sentence are true, and the second is why review still matters.
 
 Before saying a change is done:
 
