@@ -54,6 +54,7 @@ model AuditLog {
 
   @@index([entity, entityId])
   @@index([occurredAt])
+  @@index([actorId])
   @@map("audit_log")
 }
 

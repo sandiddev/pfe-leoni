@@ -49,10 +49,10 @@ model StockItem {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  lots              StockLot[]
-  movements         StockMovement[]
-  thresholdHistory  ThresholdHistory[]
-  alertSnapshots    StockAlertSnapshot[]
+  lots             StockLot[]
+  movements        StockMovement[]
+  thresholdHistory ThresholdHistory[]
+  alertSnapshots   StockAlertSnapshot[]
 
   @@unique([articleId, siteId])
   @@index([siteId])
@@ -73,8 +73,10 @@ model StockLot {
   stockItemId String
   stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
 
+  /// Restrict: a location still holding a lot cannot be deleted. Cascading
+  /// would delete the stock along with the shelf it sits on.
   storageLocationId String
-  storageLocation   StorageLocation @relation(fields: [storageLocationId], references: [id])
+  storageLocation   StorageLocation @relation(fields: [storageLocationId], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -116,5 +118,7 @@ model StockMovement {
 
   @@index([stockItemId, occurredAt])
   @@index([type])
+  @@index([lotId])
+  @@index([userId])
   @@map("stock_movement")
 }

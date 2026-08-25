@@ -18,7 +18,8 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf .turbo node_modules src/generated *.tsbuildinfo",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:check": "prisma validate && prisma migrate diff --from-config-datasource --to-schema prisma/schema --exit-code"
   },
   "dependencies": {
     "@leoni/core": "workspace:*",

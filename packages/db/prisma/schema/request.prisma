@@ -14,13 +14,18 @@ model ReplenishmentRequest {
 
   /// Supplying plant (LTN4) and consuming plant (LTN1). Stored rather than
   /// assumed, so a third site can be added without a data migration.
+  /// Restrict, not Cascade: a plant with requests against it is a plant that
+  /// cannot be deleted. Losing a site row would silently take the history of
+  /// every transfer through it.
   fromSiteId String
-  fromSite   Site   @relation("RequestFromSite", fields: [fromSiteId], references: [id])
+  fromSite   Site   @relation("RequestFromSite", fields: [fromSiteId], references: [id], onDelete: Restrict)
   toSiteId   String
-  toSite     Site   @relation("RequestToSite", fields: [toSiteId], references: [id])
+  toSite     Site   @relation("RequestToSite", fields: [toSiteId], references: [id], onDelete: Restrict)
 
+  /// Restrict: a user who has raised a request is deactivated, never deleted,
+  /// so the audit trail keeps a resolvable author.
   createdById String
-  createdBy   User   @relation("RequestCreatedBy", fields: [createdById], references: [id])
+  createdBy   User   @relation("RequestCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
   approvedById String?
   approvedBy   User?   @relation("RequestApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
@@ -55,6 +60,11 @@ model ReplenishmentRequest {
   @@index([toSiteId, status])
   @@index([fromSiteId, status])
   @@index([createdAt])
+  // "requests I raised" and "requests I approved" are both screens, and an
+  // unindexed foreign key also lengthens the lock taken when a user row is
+  // touched.
+  @@index([createdById])
+  @@index([approvedById])
   @@map("replenishment_request")
 }
 
@@ -71,8 +81,10 @@ model ReplenishmentRequestLine {
   requestId String
   request   ReplenishmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
+  /// Restrict: an article that appears on a request line is archived via
+  /// `isActive`, never deleted — a closed request must still make sense.
   articleId String
-  article   Article @relation(fields: [articleId], references: [id])
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Restrict)
 
   requestedQuantity Int
   approvedQuantity  Int?
@@ -123,6 +135,7 @@ model RequestStatusHistory {
   occurredAt DateTime @default(now())
 
   @@index([requestId, occurredAt])
+  @@index([userId])
   @@map("request_status_history")
 }
 
@@ -135,13 +148,15 @@ model RequestComment {
   requestId String
   request   ReplenishmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
+  /// Restrict: a comment keeps a resolvable author.
   userId String
-  user   User   @relation(fields: [userId], references: [id])
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([requestId, createdAt])
+  @@index([userId])
   @@map("request_comment")
 }
 
@@ -157,11 +172,13 @@ model RequestAttachment {
   requestId String
   request   ReplenishmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
+  /// Restrict: an attachment keeps a resolvable uploader.
   uploadedById String
-  uploadedBy   User   @relation(fields: [uploadedById], references: [id])
+  uploadedBy   User   @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now())
 
   @@index([requestId])
+  @@index([uploadedById])
   @@map("request_attachment")
 }

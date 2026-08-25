@@ -8,10 +8,10 @@
 // ---------------------------------------------------------------------------
 
 model User {
-  id            String    @id @default(cuid())
+  id            String  @id @default(cuid())
   name          String
-  email         String    @unique
-  emailVerified Boolean   @default(false)
+  email         String  @unique
+  emailVerified Boolean @default(false)
   image         String?
 
   // --- LEONI-specific ---
@@ -31,14 +31,14 @@ model User {
   sessions Session[]
   accounts Account[]
 
-  createdRequests   ReplenishmentRequest[] @relation("RequestCreatedBy")
-  approvedRequests  ReplenishmentRequest[] @relation("RequestApprovedBy")
-  statusChanges     RequestStatusHistory[]
-  comments          RequestComment[]
-  attachments       RequestAttachment[]
-  stockMovements    StockMovement[]
-  notifications     Notification[]
-  auditEntries      AuditLog[]
+  createdRequests  ReplenishmentRequest[] @relation("RequestCreatedBy")
+  approvedRequests ReplenishmentRequest[] @relation("RequestApprovedBy")
+  statusChanges    RequestStatusHistory[]
+  comments         RequestComment[]
+  attachments      RequestAttachment[]
+  stockMovements   StockMovement[]
+  notifications    Notification[]
+  auditEntries     AuditLog[]
 
   @@index([siteId])
   @@index([role])
@@ -75,8 +75,8 @@ model Account {
   issuer String
 
   /// For a credential account this is the user's own id.
-  accountId  String
-  providerId String
+  accountId             String
+  providerId            String
   accessToken           String?
   refreshToken          String?
   idToken               String?
