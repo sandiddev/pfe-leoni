@@ -142,18 +142,20 @@ export interface StockLotItem {
   readonly locationCode: string;
 }
 
+/**
+ * The logistics study's original formulas applied to the same article
+ * (brief section 3.1), so the enrichment can be defended with numbers rather
+ * than argument. See `computeLegacyThresholds` in @leoni/core.
+ */
+export interface LegacyThresholdComparison {
+  readonly min: number;
+  readonly max: number;
+}
+
 /** The article detail screen. */
 export interface ArticleDetail extends ArticleListItem {
   readonly lots: readonly StockLotItem[];
   readonly recentMovements: readonly StockMovementItem[];
   readonly thresholdHistory: readonly ThresholdHistoryPoint[];
-  /**
-   * What the logistics study's original formulas would have produced on the
-   * same data (brief section 3.1), so the enrichment can be defended with
-   * numbers rather than argument.
-   */
-  readonly legacyThresholds: {
-    readonly min: number;
-    readonly max: number;
-  };
+  readonly legacyThresholds: LegacyThresholdComparison;
 }

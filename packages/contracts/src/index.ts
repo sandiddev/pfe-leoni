@@ -44,6 +44,7 @@ export {
   type ArticleDetail,
   type ArticleListInput,
   type ArticleListItem,
+  type LegacyThresholdComparison,
   type StockLotItem,
   type StockMovementItem,
   type ThresholdHistoryPoint,

@@ -22,6 +22,7 @@
     "db:generate": "pnpm --filter @leoni/db db:generate",
     "db:migrate": "pnpm --filter @leoni/db db:migrate",
     "db:deploy": "pnpm --filter @leoni/db db:deploy",
+    "db:check": "pnpm --filter @leoni/db db:check",
     "db:seed": "pnpm --filter @leoni/db db:seed",
     "db:studio": "pnpm --filter @leoni/db db:studio",
     "db:reset": "pnpm --filter @leoni/db db:reset",

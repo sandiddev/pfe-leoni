@@ -194,6 +194,10 @@ pnpm dev                # http://localhost:4300
 pnpm typecheck && pnpm lint && pnpm test
 ```
 
+```bash
+pnpm db:check          # schema valid, and no change left without a migration
+```
+
 Demo accounts (password `Leoni2026!`):
 
 | Email                       | Role                   |
@@ -217,14 +221,62 @@ Demo accounts (password `Leoni2026!`):
 - **There is one `.env`, at the repository root.** The Prisma CLI, the seed and Next each
   load it explicitly; do not create per-package copies.
 - **Adding a Prisma enum value requires the matching change in `@leoni/core`.** The parity
-  test in `packages/db/src/enum-parity.test.ts` will fail the build otherwise — on purpose.
-- **`prisma migrate dev` needs a TTY.** In a non-interactive shell use
-  `prisma migrate diff --from-config-datasource --to-schema prisma/schema --script` and
-  then `prisma migrate deploy`.
+  test in `packages/db/src/enum-parity.test.ts` will fail the build otherwise — on purpose,
+  and in both directions: a whole new enum with no domain union fails too.
+- **`prisma migrate dev` needs a TTY.** See section 10 for the non-interactive recipe.
 
 ---
 
-## 10. Business rules
+## 10. Changing the database
+
+The schema is `packages/db/prisma/schema/*.prisma` — one file per concern, not one big file.
+A change to it is never finished until a migration carries it, and these steps are what the
+hooks and tests check for you.
+
+**1. Edit the schema.** The conventions below are enforced by
+`packages/db/src/schema-conventions.test.ts`, per model:
+
+| Rule                                          | Why                                                                                                         |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `@@map("snake_case")` on every model          | The database is read directly through psql and Adminer during the defence                                   |
+| `@db.Decimal(p, s)` on every `Decimal`        | Without it Postgres gets `numeric(65,30)` — a precision nobody chose                                        |
+| Never `Float`                                 | `Int` for quantities, `Decimal` for rates. A float part count renders as 999.9999999                        |
+| Explicit `onDelete` on every relation you own | Prisma's implicit default is `Restrict` when required and `SetNull` when optional — write the decision down |
+| An index on every foreign key you own         | Postgres does not create one. Unindexed FK = sequential scan on the join, longer lock on the parent delete  |
+| A creation timestamp on every model           | Every KPI in §6.5 is a question about time                                                                  |
+
+**2. Write the migration.** `prisma migrate dev` needs a TTY, so in a non-interactive shell:
+
+```bash
+cd packages/db && mkdir -p "prisma/migrations/$(date +%Y%m%d%H%M%S)_short_snake_case_name"
+```
+
+```bash
+cd packages/db && pnpm exec prisma migrate diff --from-config-datasource --to-schema prisma/schema --script > prisma/migrations/<the_dir_you_just_made>/migration.sql
+```
+
+**3. Apply and check.**
+
+```bash
+pnpm --filter @leoni/db exec prisma migrate deploy && pnpm db:check && pnpm test
+```
+
+`pnpm db:check` validates the schema and exits non-zero if the database and the schema still
+disagree — i.e. if a change has no migration. It is the answer to "did I forget a migration?".
+
+**Never edit a committed migration.** Prisma checksums every applied migration, so editing the
+SQL afterwards makes `migrate deploy` fail on every _other_ machine with "migration modified
+after being applied", while yours keeps working — the damage is invisible from where it was
+done. A migration is history; to change the schema, add another one. A `PreToolUse` hook
+refuses the edit (an uncommitted migration is still a draft, and editing that is fine).
+
+**Adding an enum, a status or an ABC-like set?** It belongs in `@leoni/core` in the `ROLES`
+shape _and_ in the schema, and `enum-parity.test.ts` checks both directions. Adding it to only
+one side fails the build.
+
+---
+
+## 11. Business rules
 
 The formulas and the workflow are one thing; the invariants they must never violate are
 another. [docs/business-rules.md](docs/business-rules.md) states each one with its reason and
@@ -250,7 +302,7 @@ The ones that cause the worst damage when broken:
 
 ---
 
-## 11. What actually stops you
+## 12. What actually stops you
 
 A rule nobody has watched fail is a comment. This table says what enforces each rule and how
 to make it fire — three rules in this file were honour-system until recently, and each was
@@ -294,9 +346,15 @@ Before saying a change is done:
 pnpm typecheck && pnpm lint && pnpm test
 ```
 
+And if the change touched `prisma/schema/`, also:
+
+```bash
+pnpm db:check
+```
+
 ---
 
-## 12. Further reading
+## 13. Further reading
 
 | Document                                         | What it answers                               |
 | ------------------------------------------------ | --------------------------------------------- |
