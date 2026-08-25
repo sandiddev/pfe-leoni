@@ -61,15 +61,15 @@ export const NOMINAL_STATUS_SEQUENCE = [
 ] as const;
 
 export function isRequestStatus(value: string): value is RequestStatus {
-  return (REQUEST_STATUSES as readonly string[]).includes(value);
+  return REQUEST_STATUSES.some((candidate) => candidate === value);
 }
 
 export function isTerminalStatus(status: RequestStatus): boolean {
-  return (TERMINAL_STATUSES as readonly RequestStatus[]).includes(status);
+  return TERMINAL_STATUSES.some((candidate) => candidate === status);
 }
 
 export function isExceptionStatus(status: RequestStatus): boolean {
-  return (EXCEPTION_STATUSES as readonly RequestStatus[]).includes(status);
+  return EXCEPTION_STATUSES.some((candidate) => candidate === status);
 }
 
 /**
@@ -77,6 +77,6 @@ export function isExceptionStatus(status: RequestStatus): boolean {
  * Returns `null` for statuses that are off the happy path.
  */
 export function nominalStepIndex(status: RequestStatus): number | null {
-  const index = (NOMINAL_STATUS_SEQUENCE as readonly RequestStatus[]).indexOf(status);
+  const index = NOMINAL_STATUS_SEQUENCE.findIndex((candidate) => candidate === status);
   return index === -1 ? null : index;
 }

@@ -2,7 +2,7 @@ import nextPlugin from "@next/eslint-plugin-next";
 import tanstackQuery from "@tanstack/eslint-plugin-query";
 import reactHooks from "eslint-plugin-react-hooks";
 
-import { base } from "./base.js";
+import { base, restrictedSyntax } from "./base.js";
 
 /**
  * Configuration for `apps/web`.
@@ -43,14 +43,7 @@ export const next = [
       // A business rule duplicated in a component is a rule that will drift.
       "no-restricted-syntax": [
         "error",
-        {
-          selector: "ExportAllDeclaration",
-          message: "Re-export explicitly by name.",
-        },
-        {
-          selector: "TSEnumDeclaration",
-          message: "Use a `const` object + union type instead of `enum`.",
-        },
+        ...restrictedSyntax,
         {
           selector: "Literal[value=/#[0-9a-fA-F]{3,8}/]",
           message:

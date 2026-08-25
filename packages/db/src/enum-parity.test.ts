@@ -31,18 +31,28 @@ import * as prismaEnums from "./generated/prisma/enums";
  * of the nine enums in this schema.
  */
 
-/** Domain union name -> the values it declares. */
-const DOMAIN_ENUMS = {
-  AbcClass: ABC_CLASSES,
-  AlertLevel: ALERT_LEVELS,
-  MovementType: MOVEMENT_TYPES,
-  NotificationType: NOTIFICATION_TYPES,
-  RecalculationTrigger: RECALCULATION_TRIGGERS,
-  RequestPriority: REQUEST_PRIORITIES,
-  RequestStatus: REQUEST_STATUSES,
-  Role: ROLES,
-  SiteType: SITE_TYPES,
-} satisfies Readonly<Record<string, readonly string[]>>;
+/**
+ * Each Prisma enum beside the domain union that must match it.
+ *
+ * Paired explicitly rather than looked up by name from a record: indexing two
+ * objects by a `string` key needs a cast on both sides, and the whole point of
+ * this file is that agreements should be checked, not asserted.
+ */
+const ENUM_PAIRS = [
+  { name: "AbcClass", domain: ABC_CLASSES, prisma: prismaEnums.AbcClass },
+  { name: "AlertLevel", domain: ALERT_LEVELS, prisma: prismaEnums.AlertLevel },
+  { name: "MovementType", domain: MOVEMENT_TYPES, prisma: prismaEnums.MovementType },
+  { name: "NotificationType", domain: NOTIFICATION_TYPES, prisma: prismaEnums.NotificationType },
+  {
+    name: "RecalculationTrigger",
+    domain: RECALCULATION_TRIGGERS,
+    prisma: prismaEnums.RecalculationTrigger,
+  },
+  { name: "RequestPriority", domain: REQUEST_PRIORITIES, prisma: prismaEnums.RequestPriority },
+  { name: "RequestStatus", domain: REQUEST_STATUSES, prisma: prismaEnums.RequestStatus },
+  { name: "Role", domain: ROLES, prisma: prismaEnums.Role },
+  { name: "SiteType", domain: SITE_TYPES, prisma: prismaEnums.SiteType },
+] as const;
 
 /**
  * Prisma emits each enum as a frozen object of value -> value, alongside its
@@ -69,15 +79,15 @@ describe("enum parity between @leoni/core and the Prisma schema", () => {
   it("declares a domain union for every Prisma enum", () => {
     // The direction that actually catches new work: a `enum Foo` added to the
     // schema with no matching const array in @leoni/core fails right here.
-    expect(prismaEnumNames()).toStrictEqual(Object.keys(DOMAIN_ENUMS).toSorted());
+    expect(prismaEnumNames()).toStrictEqual(ENUM_PAIRS.map((pair) => pair.name).toSorted());
   });
 
-  it.each(Object.keys(DOMAIN_ENUMS))("agrees on the members of %s", (name) => {
-    const domain = DOMAIN_ENUMS[name as keyof typeof DOMAIN_ENUMS];
-    const prisma = prismaEnums[name as keyof typeof prismaEnums];
-
-    expect(valuesOf(prisma)).toStrictEqual([...domain].toSorted());
-  });
+  it.each(ENUM_PAIRS.map((pair) => [pair.name, pair] as const))(
+    "agrees on the members of %s",
+    (_name, pair) => {
+      expect(valuesOf(pair.prisma)).toStrictEqual([...pair.domain].toSorted());
+    },
+  );
 
   it("does not store LATE as a request status", () => {
     // Lateness is derived from expectedDeliveryAt, not stored, so that a late

@@ -1,6 +1,6 @@
 import reactHooks from "eslint-plugin-react-hooks";
 
-import { base } from "./base.js";
+import { base, restrictedSyntax } from "./base.js";
 
 /**
  * Configuration for `@leoni/ui` — the design system.
@@ -34,14 +34,7 @@ export const react = [
       // Tailwind arbitrary value here means the design system has been bypassed.
       "no-restricted-syntax": [
         "error",
-        {
-          selector: "ExportAllDeclaration",
-          message: "Re-export explicitly by name.",
-        },
-        {
-          selector: "TSEnumDeclaration",
-          message: "Use a `const` object + union type instead of `enum`.",
-        },
+        ...restrictedSyntax,
         {
           selector: "Literal[value=/#[0-9a-fA-F]{3,8}/]",
           message:

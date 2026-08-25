@@ -15,7 +15,7 @@ export const ROLES = [
 export type Role = (typeof ROLES)[number];
 
 export function isRole(value: string): value is Role {
-  return (ROLES as readonly string[]).includes(value);
+  return ROLES.some((role) => role === value);
 }
 
 /**

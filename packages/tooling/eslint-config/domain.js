@@ -1,4 +1,4 @@
-import { base } from "./base.js";
+import { base, restrictedSyntax } from "./base.js";
 
 /**
  * Configuration for `@leoni/core` — the pure domain layer.
@@ -56,14 +56,9 @@ export const domain = [
       ],
       "no-restricted-syntax": [
         "error",
-        {
-          selector: "ExportAllDeclaration",
-          message: "Re-export explicitly by name.",
-        },
-        {
-          selector: "TSEnumDeclaration",
-          message: "Use a `const` object + union type instead of `enum`.",
-        },
+        // Spread, not replaced: a bare array here would silently drop the
+        // workspace-wide bans (`as`, `process.env`, `export *`, `enum`).
+        ...restrictedSyntax,
         {
           selector: "NewExpression[callee.name='Date'][arguments.length=0]",
           message:
