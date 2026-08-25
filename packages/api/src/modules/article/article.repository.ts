@@ -1,5 +1,8 @@
 import type { ArticleListInput } from "@leoni/contracts";
-import { db, type Prisma } from "@leoni/db";
+import type { AbcClass } from "@leoni/core";
+import { db, Prisma } from "@leoni/db";
+
+import type { AuditEntry } from "../../shared/audit";
 
 /**
  * Persistence for the article module.
@@ -197,7 +200,7 @@ export async function findThresholdHistory(stockItemId: string, limit: number) {
 }
 
 /** The parameters in force for a class, used to recompute a suggestion. */
-export async function findParameterForClass(abcClass: "A" | "B" | "C") {
+export async function findParameterForClass(abcClass: AbcClass) {
   return db.replenishmentParameter.findUnique({ where: { abcClass } });
 }
 
@@ -209,12 +212,45 @@ export interface UpdateArticleData {
   readonly designation: string;
   readonly vpe: number;
   readonly leadTimeDays: number;
-  readonly abcClass: "A" | "B" | "C";
+  readonly abcClass: AbcClass;
   readonly isActive: boolean;
 }
 
-export async function update(articleId: string, data: UpdateArticleData) {
-  return db.article.update({ where: { id: articleId }, data });
+export interface UpdateArticleOptions {
+  readonly articleId: string;
+  readonly data: UpdateArticleData;
+  /** Built by the service. Written in the same transaction as the row. */
+  readonly audit: AuditEntry;
+}
+
+/**
+ * Updates an article and records the change, atomically.
+ *
+ * The two writes are one transaction rather than two calls because a master
+ * data edit with no trail is exactly what this application exists to replace.
+ * If the audit insert fails — a constraint, a dropped connection — the article
+ * edit must fail with it, or the trail has a hole nobody will notice until
+ * someone asks who changed a lead time.
+ *
+ * Nullable Json columns need Prisma's explicit `DbNull`: passing a bare `null`
+ * would be read as "JSON null", a different value in Postgres.
+ */
+export async function updateWithAudit(options: UpdateArticleOptions): Promise<void> {
+  const { articleId, data, audit } = options;
+
+  await db.$transaction([
+    db.article.update({ where: { id: articleId }, data }),
+    db.auditLog.create({
+      data: {
+        entity: audit.entity,
+        entityId: audit.entityId,
+        action: audit.action,
+        before: audit.before ?? Prisma.DbNull,
+        after: audit.after ?? Prisma.DbNull,
+        actorId: audit.actorId,
+      },
+    }),
+  ]);
 }
 
 export async function findRawArticle(articleId: string) {

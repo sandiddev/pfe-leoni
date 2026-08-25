@@ -18,6 +18,7 @@ import {
 
 import type { Actor } from "../../context";
 import { assertCanAccessSite, resolveSiteFilter } from "../../middlewares/site-scope";
+import type { AuditPayload } from "../../shared/audit";
 import * as mapper from "./article.mapper";
 import * as repository from "./article.repository";
 
@@ -177,6 +178,27 @@ export async function byId(actor: Actor, input: ArticleByIdInput): Promise<Artic
   };
 }
 
+/** The master-data fields this operation can change, and therefore audits. */
+const AUDITED_ARTICLE_FIELDS = [
+  "designation",
+  "vpe",
+  "leadTimeDays",
+  "abcClass",
+  "isActive",
+] as const;
+
+interface AuditableArticle {
+  readonly designation: string;
+  readonly vpe: number;
+  readonly leadTimeDays: number;
+  readonly abcClass: AbcClass;
+  readonly isActive: boolean;
+}
+
+function auditedFields(article: AuditableArticle): AuditPayload {
+  return Object.fromEntries(AUDITED_ARTICLE_FIELDS.map((field) => [field, article[field]]));
+}
+
 /**
  * Updates article master data.
  *
@@ -184,9 +206,14 @@ export async function byId(actor: Actor, input: ArticleByIdInput): Promise<Artic
  * What belongs here is the consequence: changing the VPE or the lead time
  * invalidates the stored thresholds, and the caller is told so rather than
  * being left with figures that no longer match the article they describe.
+ *
+ * The change is audited. Min, Max, VPE and lead time are the numbers every
+ * threshold in the application derives from, so "who changed this, and from
+ * what" has to be answerable months later — that is what `AuditLog` is for, and
+ * the repository writes it in the same transaction as the row.
  */
 export async function update(
-  _actor: Actor,
+  actor: Actor,
   input: UpdateArticleInput,
 ): Promise<{ articleId: string; thresholdsNeedRecalculation: boolean }> {
   const existing = await repository.findRawArticle(input.articleId);
@@ -200,12 +227,28 @@ export async function update(
   const thresholdsNeedRecalculation =
     existing.leadTimeDays !== input.leadTimeDays || existing.abcClass !== input.abcClass;
 
-  await repository.update(input.articleId, {
+  const data = {
     designation: input.designation,
     vpe: input.vpe,
     leadTimeDays: input.leadTimeDays,
     abcClass: input.abcClass,
     isActive: input.isActive,
+  };
+
+  await repository.updateWithAudit({
+    articleId: input.articleId,
+    data,
+    audit: {
+      entity: "Article",
+      entityId: input.articleId,
+      action: "UPDATE",
+      // Both sides are recorded so a change can be explained without replaying
+      // the whole log, and narrowed to the fields this operation can touch —
+      // storing timestamps and ids would bury the two numbers that matter.
+      before: auditedFields(existing),
+      after: auditedFields(data),
+      actorId: actor.userId,
+    },
   });
 
   return { articleId: input.articleId, thresholdsNeedRecalculation };
