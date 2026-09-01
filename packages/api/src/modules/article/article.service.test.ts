@@ -103,6 +103,11 @@ function stubRepository(overrides: Partial<ArticleRepository> = {}): ArticleRepo
     findMany: notStubbed("findMany"),
     findAllSites: async () => [{ id: "site-ltn1" }, { id: "site-ltn4" }],
     findByReference: async () => null,
+    findByReferences: async () => [],
+    findSitesWithCodes: async () => [
+      { id: "site-ltn1", code: "LTN1" },
+      { id: "site-ltn4", code: "LTN4" },
+    ],
     createWithAudit: notStubbed("createWithAudit"),
     findByArticleAndSite: notStubbed("findByArticleAndSite"),
     findLots: notStubbed("findLots"),
@@ -672,5 +677,226 @@ describe("article creation", () => {
         repository: stubRepository({ findAllSites: async () => [] }),
       }),
     ).rejects.toThrow(BusinessRuleError);
+  });
+});
+
+describe("CSV catalogue import (brief section 6.1)", () => {
+  const HEADER = "reference,designation,vpe,leadTimeDays,abcClass,initialStock,siteCode";
+
+  /**
+   * The recalculation, stubbed out.
+   *
+   * What the import does to thresholds is `runRecalculation`'s business and is
+   * tested there. Injecting a no-op keeps these tests about the file.
+   */
+  const noRecalculation = async () => ({
+    evaluated: 0,
+    changed: 0,
+    nowCritical: 0,
+    reclassified: 0,
+    runAt: new Date("2026-09-01"),
+  });
+  const VALID = `${HEADER}\nBTR-1,Boitier 12 voies,250,2,A,1000,LTN1`;
+
+  /** Captures whether anything was written at all. */
+  function captureWrites() {
+    const created: string[] = [];
+    const updated: string[] = [];
+
+    return {
+      created,
+      updated,
+      stubs: {
+        createWithAudit: async (options: { readonly data: { readonly reference: string } }) => {
+          created.push(options.data.reference);
+        },
+        updateWithAudit: async (options: { readonly articleId: string }) => {
+          updated.push(options.articleId);
+        },
+      },
+    };
+  }
+
+  it("imports a valid file and reports what it did", async () => {
+    const writes = captureWrites();
+
+    const result = await service.importFromCsv({
+      actor: actor(),
+      content: VALID,
+      recalculate: noRecalculation,
+      repository: stubRepository({
+        findAllSites: async () => [{ id: "site-ltn1" }, { id: "site-ltn4" }],
+        ...writes.stubs,
+      }),
+    });
+
+    expect(result).toEqual({ rows: 1, imported: 1, updated: 0, errors: [] });
+    expect(writes.created).toEqual(["BTR-1"]);
+  });
+
+  it("writes nothing at all when any row is invalid", async () => {
+    // The rule the whole feature turns on. A half-imported catalogue is the
+    // failure mode that costs a day to unpick.
+    const writes = captureWrites();
+
+    const result = await service.importFromCsv({
+      actor: actor(),
+      content:
+        `${HEADER}\n` +
+        `BTR-1,Boitier 12 voies,250,2,A,1000,LTN1\n` +
+        `BTR-2,Cosse,0,2,A,0,LTN1\n`,
+      recalculate: noRecalculation,
+      repository: stubRepository({
+        findAllSites: async () => [{ id: "site-ltn1" }],
+        ...writes.stubs,
+      }),
+    });
+
+    expect(result.imported).toBe(0);
+    expect(result.updated).toBe(0);
+    expect(writes.created).toEqual([]);
+    expect(writes.updated).toEqual([]);
+    expect(result.errors).toHaveLength(1);
+  });
+
+  it("numbers errors the way a spreadsheet does, counting the header", async () => {
+    // Line 2 is the first data row. Getting this wrong makes every message
+    // technically correct and practically useless.
+    const result = await service.importFromCsv({
+      actor: actor(),
+      content: `${HEADER}\nBTR-1,Boitier,250,2,Z,0,LTN1`,
+      recalculate: noRecalculation,
+      repository: stubRepository(),
+    });
+
+    expect(result.errors[0]).toMatchObject({ line: 2, column: "abcClass" });
+  });
+
+  it("refuses a file whose columns are missing, without reading rows", async () => {
+    const result = await service.importFromCsv({
+      actor: actor(),
+      content: "reference,designation\nBTR-1,Boitier",
+      recalculate: noRecalculation,
+      repository: stubRepository(),
+    });
+
+    expect(result.errors.map((error) => error.column)).toEqual([
+      "vpe",
+      "leadTimeDays",
+      "abcClass",
+      "initialStock",
+      "siteCode",
+    ]);
+    expect(result.errors.every((error) => error.line === 1)).toBe(true);
+  });
+
+  it("catches a reference repeated inside the file", async () => {
+    // The unique index would fail on the second occurrence after committing the
+    // first, which is exactly the partial write this import forbids.
+    const result = await service.importFromCsv({
+      actor: actor(),
+      content: `${HEADER}\nBTR-1,Boitier,250,2,A,0,LTN1\nBTR-1,Boitier bis,250,2,A,0,LTN1`,
+      recalculate: noRecalculation,
+      repository: stubRepository(),
+    });
+
+    expect(result.errors[0]).toMatchObject({ line: 3, column: "reference" });
+    expect(result.errors[0]?.message).toContain("ligne 2");
+  });
+
+  it("refuses a site code this installation does not have", async () => {
+    const result = await service.importFromCsv({
+      actor: actor(),
+      content: `${HEADER}\nBTR-1,Boitier,250,2,A,0,LTN9`,
+      recalculate: noRecalculation,
+      repository: stubRepository(),
+    });
+
+    expect(result.errors[0]).toMatchObject({ line: 2, column: "siteCode" });
+  });
+
+  it("updates an existing reference instead of refusing it", async () => {
+    // A catalogue export is the upstream source of truth for designation, pack
+    // size and lead time; re-importing after those change is the normal use.
+    const writes = captureWrites();
+
+    const result = await service.importFromCsv({
+      actor: actor(),
+      content: VALID,
+      recalculate: noRecalculation,
+      repository: stubRepository({
+        findByReferences: async () => [
+          {
+            id: "article-1",
+            reference: "BTR-1",
+            designation: "Ancien libelle",
+            vpe: 100,
+            leadTimeDays: 5,
+            abcClass: "C" as const,
+            isActive: true,
+          },
+        ],
+        findAllSites: async () => [{ id: "site-ltn1" }],
+        ...writes.stubs,
+      }),
+    });
+
+    expect(result).toMatchObject({ imported: 0, updated: 1 });
+    expect(writes.created).toEqual([]);
+    expect(writes.updated).toEqual(["article-1"]);
+  });
+
+  it("uppercases the reference so the natural key is stable", async () => {
+    const writes = captureWrites();
+
+    await service.importFromCsv({
+      actor: actor(),
+      content: `${HEADER}\nbtr-1,Boitier,250,2,a,0,ltn1`,
+      recalculate: noRecalculation,
+      repository: stubRepository({
+        findAllSites: async () => [{ id: "site-ltn1" }],
+        ...writes.stubs,
+      }),
+    });
+
+    expect(writes.created).toEqual(["BTR-1"]);
+  });
+
+  it("puts the opening stock only at the plant the file named", async () => {
+    const stockItems: { siteId: string; currentStock: number }[] = [];
+
+    await service.importFromCsv({
+      actor: actor(),
+      content: `${HEADER}\nBTR-1,Boitier,250,2,A,1000,LTN4`,
+      recalculate: noRecalculation,
+      repository: stubRepository({
+        findAllSites: async () => [{ id: "site-ltn1" }, { id: "site-ltn4" }],
+        createWithAudit: async (options) => {
+          stockItems.push(...options.stockItems);
+        },
+      }),
+    });
+
+    expect(stockItems).toEqual([
+      { siteId: "site-ltn1", currentStock: 0 },
+      { siteId: "site-ltn4", currentStock: 1_000 },
+    ]);
+  });
+
+  it("survives a file that Excel wrote with a BOM", async () => {
+    // Without stripping it, the first header becomes "\uFEFFreference" and the
+    // column is silently unmatchable — reported as a missing `reference`.
+    const result = await service.importFromCsv({
+      actor: actor(),
+      content: `\uFEFF${VALID}`,
+      recalculate: noRecalculation,
+      repository: stubRepository({
+        findAllSites: async () => [{ id: "site-ltn1" }],
+        createWithAudit: async () => undefined,
+      }),
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.imported).toBe(1);
   });
 });

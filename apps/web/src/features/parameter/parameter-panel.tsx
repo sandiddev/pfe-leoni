@@ -63,16 +63,25 @@ export function ParameterPanel({
   const router = useRouter();
   const toast = useToast();
 
-  const describe = (result: RecalculationResult) =>
-    `${formatQuantity(result.evaluated)} article(s) evalues, ${formatQuantity(result.changed)} seuil(s) modifie(s), ` +
-    `${formatQuantity(result.nowCritical)} au niveau ou sous le seuil mini.`;
+  const describe = (result: RecalculationResult) => {
+    const base =
+      `${formatQuantity(result.evaluated)} article(s) evalues, ${formatQuantity(result.changed)} seuil(s) modifie(s), ` +
+      `${formatQuantity(result.nowCritical)} au niveau ou sous le seuil mini.`;
+
+    // Only mentioned when it happened: a reclassification changes which
+    // parameters govern an article, so it deserves notice — and a line reading
+    // "0 articles reclasses" on every run trains people to stop reading it.
+    return result.reclassified === 0
+      ? base
+      : `${base} ${formatQuantity(result.reclassified)} article(s) reclasses (ABC).`;
+  };
 
   const update = useMutation(
     trpc.parameter.update.mutationOptions({
       onSuccess: (result: { abcClass: AbcClass }) => {
         toast.success(
           `Classe ${result.abcClass} enregistree`,
-          "Lancez un recalcul pour appliquer les nouveaux seuils aux articles.",
+          "Les seuils des articles de cette classe ont ete recalcules.",
         );
         router.refresh();
       },

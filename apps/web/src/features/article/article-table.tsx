@@ -23,6 +23,7 @@ import { useTRPC } from "~/trpc/client";
 
 import { ArticleFilters } from "./article-filters";
 import { ArticleFormDialog } from "./article-form-dialog";
+import { ArticleImportDialog } from "./article-import-dialog";
 import { ArticleRows } from "./article-rows";
 
 export interface ArticleTableProps {
@@ -153,14 +154,17 @@ export function ArticleTable({ initialItems, totalCount, canWrite }: ArticleTabl
             />
 
             {canWrite && (
-              <Button
-                onClick={() => {
-                  setIsCreating(true);
-                }}
-              >
-                <Plus />
-                Nouvel article
-              </Button>
+              <>
+                <ArticleImportDialog />
+                <Button
+                  onClick={() => {
+                    setIsCreating(true);
+                  }}
+                >
+                  <Plus />
+                  Nouvel article
+                </Button>
+              </>
             )}
           </div>
         }

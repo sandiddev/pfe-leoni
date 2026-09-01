@@ -42,6 +42,7 @@ function stubRepository(overrides: Partial<StockRepository> = {}): StockReposito
   };
 
   return {
+    findSiteRecipients: async () => ["user-1"],
     findMovements: notStubbed("findMovements"),
     findLotsByLocation: notStubbed("findLotsByLocation"),
     findStorageLocations: notStubbed("findStorageLocations"),
@@ -58,6 +59,8 @@ interface StockItemOptions {
   readonly currentStock?: number;
   readonly minThreshold?: number;
   readonly siteId?: string;
+  /** The level before the movement, which decides whether one is news. */
+  readonly alertLevel?: "NORMAL" | "WARNING" | "CRITICAL" | "RUPTURE";
   readonly lots?: readonly { id: string; quantity: number; fifoDate: Date }[];
 }
 
@@ -66,6 +69,7 @@ function stockItem(options: StockItemOptions = {}) {
     currentStock = 1_000,
     minThreshold = 400,
     siteId = LTN1,
+    alertLevel = "NORMAL",
     lots = [
       { id: "lot-old", quantity: 600, fifoDate: new Date("2026-01-05") },
       { id: "lot-new", quantity: 400, fifoDate: new Date("2026-02-20") },
@@ -77,7 +81,13 @@ function stockItem(options: StockItemOptions = {}) {
     currentStock,
     minThreshold: new Prisma.Decimal(minThreshold),
     siteId,
-    article: { id: "article-1", reference: "REF-001", abcClass: "A" as const },
+    alertLevel,
+    article: {
+      id: "article-1",
+      reference: "REF-001",
+      designation: "Boitier connecteur 12 voies",
+      abcClass: "A" as const,
+    },
     lots: [...lots],
   };
 }
@@ -535,3 +545,96 @@ function lotRow(): StockLotRow {
     stockItem: { article: { id: "article-1", reference: "REF-001", designation: "Fil 0.5" } },
   };
 }
+
+describe("stock service - shortage notifications", () => {
+  it("tells the plant when an article crosses into rupture", async () => {
+    const written = captureWrite();
+
+    await service.record({
+      actor: actor(),
+      input: { articleId: "article-1", type: "EXIT", quantity: 1_000 },
+      repository: stubRepository({
+        findStockItemForMovement: async () =>
+          stockItem({ currentStock: 1_000, minThreshold: 400, alertLevel: "NORMAL" }),
+        findSiteRecipients: async () => ["user-1", "user-2"],
+        recordMovementWithStockUpdate: written.capture,
+      }),
+    });
+
+    const notifications = written.options().notifications;
+    expect(notifications).toHaveLength(2);
+    expect(notifications[0]?.type).toBe("STOCK_RUPTURE");
+    expect(notifications[0]?.title).toContain("REF-001");
+    expect(notifications[0]?.payload).toMatchObject({ level: "RUPTURE", currentStock: 0 });
+  });
+
+  it("distinguishes a critical level from a rupture", async () => {
+    const written = captureWrite();
+
+    await service.record({
+      actor: actor(),
+      input: { articleId: "article-1", type: "EXIT", quantity: 700 },
+      repository: stubRepository({
+        findStockItemForMovement: async () =>
+          stockItem({ currentStock: 1_000, minThreshold: 400, alertLevel: "NORMAL" }),
+        recordMovementWithStockUpdate: written.capture,
+      }),
+    });
+
+    // 300 left against a Min of 400: at or below Min is critical, not a rupture.
+    expect(written.options().notifications[0]?.type).toBe("STOCK_CRITICAL");
+  });
+
+  it("says nothing when the article was already at that level", async () => {
+    // The case that decides whether the bell stays readable. An article below
+    // its reorder point receives movements all day.
+    const written = captureWrite();
+
+    await service.record({
+      actor: actor(),
+      input: { articleId: "article-1", type: "EXIT", quantity: 100 },
+      repository: stubRepository({
+        findStockItemForMovement: async () =>
+          stockItem({ currentStock: 300, minThreshold: 400, alertLevel: "CRITICAL" }),
+        recordMovementWithStockUpdate: written.capture,
+      }),
+    });
+
+    expect(written.options().notifications).toEqual([]);
+  });
+
+  it("says nothing when a receipt lifts the article back out of shortage", async () => {
+    const written = captureWrite();
+
+    await service.record({
+      actor: actor(),
+      input: { articleId: "article-1", type: "ENTRY", quantity: 1_000, storageLocationId: "loc-1" },
+      repository: stubRepository({
+        findStockItemForMovement: async () =>
+          stockItem({ currentStock: 300, minThreshold: 400, alertLevel: "CRITICAL" }),
+        findStorageLocationById: async () => ({ id: "loc-1", siteId: LTN1 }),
+        recordMovementWithStockUpdate: written.capture,
+      }),
+    });
+
+    expect(written.options().notifications).toEqual([]);
+  });
+
+  it("hands the notifications to the same call as the movement", async () => {
+    // Two calls would let a rollback leave a notification announcing a movement
+    // that never happened.
+    const written = captureWrite();
+
+    await service.record({
+      actor: actor(),
+      input: { articleId: "article-1", type: "EXIT", quantity: 1_000 },
+      repository: stubRepository({
+        findStockItemForMovement: async () => stockItem({ currentStock: 1_000 }),
+        recordMovementWithStockUpdate: written.capture,
+      }),
+    });
+
+    expect(written.count()).toBe(1);
+    expect(written.options().notifications.length).toBeGreaterThan(0);
+  });
+});

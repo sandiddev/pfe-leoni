@@ -42,8 +42,14 @@ export {
 
 // --- Article ----------------------------------------------------------------
 export {
+  ARTICLE_IMPORT_COLUMNS,
+  ARTICLE_IMPORT_HEADERS_FR,
   type ArticleByIdInput,
   type ArticleDetail,
+  type ArticleImportColumn,
+  type ArticleImportError,
+  type ArticleImportResult,
+  type ArticleImportRow,
   type CreateArticleInput,
   type ArticleListInput,
   type ArticleListItem,
@@ -53,6 +59,7 @@ export {
   type ThresholdHistoryPoint,
   type UpdateArticleInput,
   articleByIdInputSchema,
+  articleImportRowSchema,
   articleListInputSchema,
   articleSortFieldSchema,
   createArticleInputSchema,
@@ -108,6 +115,7 @@ export {
   type UpdateDraftInput,
   type TransitionRequestInput,
   type TransitionResult,
+  type TransitionStockChange,
   attachmentListInputSchema,
   commentRequestInputSchema,
   createRequestInputSchema,

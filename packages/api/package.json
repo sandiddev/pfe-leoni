@@ -22,6 +22,7 @@
     "@leoni/db": "workspace:*",
     "@leoni/env": "workspace:*",
     "@trpc/server": "catalog:",
+    "papaparse": "catalog:",
     "superjson": "catalog:",
     "zod": "catalog:"
   },
@@ -29,10 +30,11 @@
     "@leoni/eslint-config": "workspace:*",
     "@leoni/tsconfig": "workspace:*",
     "@types/node": "catalog:",
+    "@types/papaparse": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "eslint": "catalog:",
+    "tsx": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "tsx": "catalog:"
+    "vitest": "catalog:"
   }
 }

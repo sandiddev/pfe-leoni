@@ -255,15 +255,20 @@ export interface RequestDetail extends RequestListItem {
   readonly availableActions: readonly AvailableAction[];
 }
 
+/** One end of a transfer, as a transition reports it back to the screen. */
+export interface TransitionStockChange {
+  readonly articleId: string;
+  readonly quantity: number;
+  readonly newStock: number;
+  readonly alertLevel: AlertLevel;
+}
+
 /** What a transition changed, so the screen can confirm it without a refetch. */
 export interface TransitionResult {
   readonly requestId: string;
   readonly status: RequestStatus;
-  /** Populated by `confirmReceipt`: the stock the receipt put away. */
-  readonly stockEntries: readonly {
-    readonly articleId: string;
-    readonly quantity: number;
-    readonly newStock: number;
-    readonly alertLevel: AlertLevel;
-  }[];
+  /** Populated by `confirmReceipt`: the stock the receipt put away at LTN1. */
+  readonly stockEntries: readonly TransitionStockChange[];
+  /** Populated by `ship`: the stock the dispatch took off LTN4. */
+  readonly stockExits: readonly TransitionStockChange[];
 }

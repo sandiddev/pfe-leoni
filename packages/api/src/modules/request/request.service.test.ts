@@ -59,9 +59,13 @@ function stubRepository(overrides: Partial<RequestRepository> = {}): RequestRepo
     ],
     findArticlesForRequest: notStubbed("findArticlesForRequest"),
     findReceiptTargets: notStubbed("findReceiptTargets"),
+    findDispatchTargets: notStubbed("findDispatchTargets"),
     findDefaultLocation: async () => ({ id: "loc-default" }),
     findParameterForClass: async () => null,
     findRecipients: async () => [],
+    findSiteRecipients: async () => ["user-ltn4"],
+    findRequestsBecomingLate: async () => [],
+    recordNotifications: async () => 0,
     findLastRequestCode: async () => null,
     createWithHistory: notStubbed("createWithHistory"),
     updateDraft: async () => undefined,
@@ -188,6 +192,7 @@ describe("request workflow - every transition the domain defines", () => {
         repository: stubRepository({
           findById: async () => detail({ status: move.from }),
           findReceiptTargets: async () => [receiptTarget()],
+          findDispatchTargets: async () => [dispatchTarget()],
           applyTransition: written.capture,
         }),
       });
@@ -339,6 +344,7 @@ describe("request workflow - line quantities", () => {
       repository: stubRepository({
         findById: async () =>
           detail({ status: "READY", lines: [{ approvedQuantity: 300, preparedQuantity: 250 }] }),
+        findDispatchTargets: async () => [dispatchTarget()],
         applyTransition: written.capture,
       }),
     });
@@ -470,19 +476,184 @@ describe("request workflow - receipt writes stock", () => {
     expect(written.options().stockEntries).toEqual([]);
   });
 
-  it("touches no stock on any other transition", async () => {
+  it("touches no stock on a transition that moves nothing physical", async () => {
+    // `markReady` is a declaration about a pallet, not a movement of it. Ship
+    // and receipt are the two that touch stock; everything else must not.
+    const written = captureTransition();
+
+    await service.transition({
+      actor: actor({ role: "LTN4_RESPONSIBLE", siteId: LTN4 }),
+      input: { requestId: "request-1", action: "markReady" },
+      repository: stubRepository({
+        findById: async () => detail({ status: "IN_PREPARATION" }),
+        applyTransition: written.capture,
+      }),
+    });
+
+    expect(written.options().stockEntries).toEqual([]);
+    expect(written.options().stockExits).toEqual([]);
+  });
+});
+
+describe("request workflow - dispatch debits the supplying plant", () => {
+  it("takes the shipped quantity off LTN4", async () => {
+    // A reapprovisionnement is a transfer (domain section 1). Crediting LTN1
+    // without debiting LTN4 created units from nothing on every request, and
+    // LTN4's alert board was computed from a level that never fell.
     const written = captureTransition();
 
     await service.transition({
       actor: actor({ role: "LTN4_RESPONSIBLE", siteId: LTN4 }),
       input: { requestId: "request-1", action: "ship" },
       repository: stubRepository({
-        findById: async () => detail({ status: "READY" }),
+        findById: async () => detail({ status: "READY", lines: [{ preparedQuantity: 400 }] }),
+        findDispatchTargets: async () => [dispatchTarget({ currentStock: 5_000 })],
         applyTransition: written.capture,
       }),
     });
 
+    const [exit] = written.options().stockExits;
+    expect(exit?.quantity).toBe(400);
+    expect(exit?.expectedCurrentStock).toBe(5_000);
+    expect(exit?.newStock).toBe(4_600);
+    // Nothing arrives anywhere on a dispatch: the goods are in transit, on
+    // neither plant's books.
     expect(written.options().stockEntries).toEqual([]);
+  });
+
+  it("draws the boxes FIFO, oldest lot first", async () => {
+    const written = captureTransition();
+
+    await service.transition({
+      actor: actor({ role: "LTN4_RESPONSIBLE", siteId: LTN4 }),
+      input: { requestId: "request-1", action: "ship" },
+      repository: stubRepository({
+        findById: async () => detail({ status: "READY", lines: [{ preparedQuantity: 3_500 }] }),
+        findDispatchTargets: async () => [dispatchTarget()],
+        applyTransition: written.capture,
+      }),
+    });
+
+    const [exit] = written.options().stockExits;
+    // 3 000 from the January lot, then 500 from the February one.
+    expect(exit?.lotDraws).toEqual([
+      { lotId: "lot-old", quantity: 0, expectedQuantity: 3_000 },
+      { lotId: "lot-new", quantity: 1_500, expectedQuantity: 2_000 },
+    ]);
+    // The movement points at the oldest lot drawn — the shelf a picker went to.
+    expect(exit?.drawnFromLotId).toBe("lot-old");
+  });
+
+  it("recomputes LTN4's own alert level from what is left", async () => {
+    const written = captureTransition();
+
+    await service.transition({
+      actor: actor({ role: "LTN4_RESPONSIBLE", siteId: LTN4 }),
+      input: { requestId: "request-1", action: "ship" },
+      repository: stubRepository({
+        findById: async () => detail({ status: "READY", lines: [{ preparedQuantity: 4_700 }] }),
+        findDispatchTargets: async () => [dispatchTarget({ currentStock: 5_000, minThreshold: 400 })],
+        applyTransition: written.capture,
+      }),
+    });
+
+    // 300 left against a reorder point of 400: at or below Min is CRITICAL.
+    expect(written.options().stockExits[0]?.alertLevel).toBe("CRITICAL");
+  });
+
+  it("tells LTN4 when its own stock crosses into shortage", async () => {
+    // The supplying plant is the one that just lost the goods. Before this, LTN4
+    // learned it had gone below its own reorder point from the alert board,
+    // whenever somebody next looked.
+    const written = captureTransition();
+
+    await service.transition({
+      actor: actor({ role: "LTN4_RESPONSIBLE", siteId: LTN4 }),
+      input: { requestId: "request-1", action: "ship" },
+      repository: stubRepository({
+        findById: async () => detail({ status: "READY", lines: [{ preparedQuantity: 4_700 }] }),
+        findDispatchTargets: async () => [
+          dispatchTarget({ currentStock: 5_000, minThreshold: 400, alertLevel: "NORMAL" }),
+        ],
+        findSiteRecipients: async () => ["user-ltn4"],
+        applyTransition: written.capture,
+      }),
+    });
+
+    // 300 left against a Min of 400 — critical, and news because it was normal.
+    const shortages = written
+      .options()
+      .notifications.filter((entry) => entry.type === "STOCK_CRITICAL");
+
+    expect(shortages).toHaveLength(1);
+    expect(shortages[0]?.userId).toBe("user-ltn4");
+    expect(shortages[0]?.payload).toMatchObject({ level: "CRITICAL", currentStock: 300 });
+  });
+
+  it("says nothing when the dispatch leaves LTN4 comfortable", async () => {
+    const written = captureTransition();
+
+    await service.transition({
+      actor: actor({ role: "LTN4_RESPONSIBLE", siteId: LTN4 }),
+      input: { requestId: "request-1", action: "ship" },
+      repository: stubRepository({
+        findById: async () => detail({ status: "READY", lines: [{ preparedQuantity: 500 }] }),
+        findDispatchTargets: async () => [
+          dispatchTarget({ currentStock: 5_000, minThreshold: 400, alertLevel: "NORMAL" }),
+        ],
+        applyTransition: written.capture,
+      }),
+    });
+
+    expect(
+      written.options().notifications.filter((entry) => entry.type.startsWith("STOCK_")),
+    ).toEqual([]);
+  });
+
+  it("does not renotify a plant that was already short", async () => {
+    const written = captureTransition();
+
+    await service.transition({
+      actor: actor({ role: "LTN4_RESPONSIBLE", siteId: LTN4 }),
+      input: { requestId: "request-1", action: "ship" },
+      repository: stubRepository({
+        findById: async () => detail({ status: "READY", lines: [{ preparedQuantity: 100 }] }),
+        findDispatchTargets: async () => [
+          dispatchTarget({
+            currentStock: 300,
+            minThreshold: 400,
+            alertLevel: "CRITICAL",
+            lots: [{ id: "lot-only", quantity: 300, fifoDate: new Date("2026-01-01") }],
+          }),
+        ],
+        applyTransition: written.capture,
+      }),
+    });
+
+    expect(
+      written.options().notifications.filter((entry) => entry.type.startsWith("STOCK_")),
+    ).toEqual([]);
+  });
+
+  it("refuses to ship more than the supplying plant holds", async () => {
+    // Shipping what LTN4 does not have is a declared shortage
+    // (`declarePartial`), not a stock level going negative.
+    await expect(
+      service.transition({
+        actor: actor({ role: "LTN4_RESPONSIBLE", siteId: LTN4 }),
+        input: { requestId: "request-1", action: "ship" },
+        repository: stubRepository({
+          findById: async () => detail({ status: "READY", lines: [{ preparedQuantity: 900 }] }),
+          findDispatchTargets: async () => [
+            dispatchTarget({
+              currentStock: 500,
+              lots: [{ id: "lot-only", quantity: 500, fifoDate: new Date("2026-01-01") }],
+            }),
+          ],
+          applyTransition: async () => undefined,
+        }),
+      }),
+    ).rejects.toThrow(/Stock insuffisant a l expedition/);
   });
 });
 
@@ -1218,6 +1389,43 @@ interface ReceiptTargetOptions {
   readonly locationId?: string | null;
 }
 
+interface DispatchTargetOptions {
+  readonly currentStock?: number;
+  readonly minThreshold?: number;
+  /** The supplying plant's level before the dispatch. */
+  readonly alertLevel?: "NORMAL" | "WARNING" | "CRITICAL" | "RUPTURE";
+  readonly lots?: readonly { id: string; quantity: number; fifoDate: Date }[];
+}
+
+/** The supplying plant's stock for one line, as `findDispatchTargets` returns it. */
+function dispatchTarget(options: DispatchTargetOptions = {}) {
+  const {
+    currentStock = 5_000,
+    minThreshold = 400,
+    alertLevel = "NORMAL",
+    lots = [
+      { id: "lot-old", quantity: 3_000, fifoDate: new Date("2026-01-01") },
+      { id: "lot-new", quantity: 2_000, fifoDate: new Date("2026-02-01") },
+    ],
+  } = options;
+
+  return {
+    id: "stock-ltn4",
+    articleId: "article-0",
+    currentStock,
+    minThreshold: new Prisma.Decimal(minThreshold),
+    alertLevel,
+    article: {
+      abcClass: "A" as const,
+      reference: "REF-001",
+      designation: "Boitier connecteur 12 voies",
+    },
+    // Copied into a mutable array: Prisma returns one, and the stub has to
+    // match the repository's signature rather than a narrower readonly view.
+    lots: [...lots],
+  };
+}
+
 function receiptTarget(options: ReceiptTargetOptions = {}) {
   const { currentStock = 100, minThreshold = 400, locationId = "loc-known" } = options;
 
@@ -1256,3 +1464,119 @@ function listRow(id = "request-1"): RequestRow {
     lines: [{ requestedQuantity: 500 }],
   };
 }
+
+describe("late-request warnings (ADR 0003)", () => {
+  const overdue = (overrides: Record<string, unknown> = {}) => ({
+    id: "request-1",
+    code: "DR-2026-0042",
+    status: "SENT_TO_LTN4" as const,
+    expectedDeliveryAt: new Date("2026-08-25"),
+    createdById: "user-storekeeper",
+    toSiteId: LTN1,
+    ...overrides,
+  });
+
+  it("tells the requester and the approver, once", async () => {
+    const written: { userId: string; type: string }[] = [];
+
+    const result = await service.notifyLateRequests({
+      asOf: new Date("2026-09-01"),
+      repository: stubRepository({
+        findRequestsBecomingLate: async () => [overdue()],
+        findRecipients: async () => ["user-manager"],
+        recordNotifications: async (writes) => {
+          written.push(...writes.map((w) => ({ userId: w.userId, type: w.type })));
+          return writes.length;
+        },
+      }),
+    });
+
+    expect(result).toEqual({ late: 1, notified: 2 });
+    expect(written.map((w) => w.userId).sort()).toEqual(["user-manager", "user-storekeeper"]);
+    expect(written.every((w) => w.type === "REQUEST_LATE")).toBe(true);
+  });
+
+  it("does not tell the same person twice when they are both", async () => {
+    // The storekeeper who raised it may also hold the approving role in a small
+    // team; two identical warnings in one menu reads as a bug.
+    const written: string[] = [];
+
+    await service.notifyLateRequests({
+      asOf: new Date("2026-09-01"),
+      repository: stubRepository({
+        findRequestsBecomingLate: async () => [overdue({ createdById: "user-manager" })],
+        findRecipients: async () => ["user-manager"],
+        recordNotifications: async (writes) => {
+          written.push(...writes.map((w) => w.userId));
+          return writes.length;
+        },
+      }),
+    });
+
+    expect(written).toEqual(["user-manager"]);
+  });
+
+  it("reports how many days late, through the domain", async () => {
+    let body = "";
+
+    await service.notifyLateRequests({
+      asOf: new Date("2026-09-01"),
+      repository: stubRepository({
+        findRequestsBecomingLate: async () => [
+          overdue({ expectedDeliveryAt: new Date("2026-08-25") }),
+        ],
+        findRecipients: async () => [],
+        recordNotifications: async (writes) => {
+          body = writes[0]?.body ?? "";
+          return writes.length;
+        },
+      }),
+    });
+
+    expect(body).toContain("7 jour(s)");
+  });
+
+  it("re-checks lateness in the domain rather than trusting the query", async () => {
+    // The WHERE clause narrows the rows; `assessLateness` decides what late
+    // means. A row that slipped through — a terminal status, or a date that is
+    // not actually past — must produce nothing.
+    const written: string[] = [];
+
+    const result = await service.notifyLateRequests({
+      asOf: new Date("2026-09-01"),
+      repository: stubRepository({
+        findRequestsBecomingLate: async () => [
+          overdue({ status: "CANCELLED" }),
+          overdue({ id: "request-2", expectedDeliveryAt: new Date("2026-09-30") }),
+        ],
+        findRecipients: async () => ["user-manager"],
+        recordNotifications: async (writes) => {
+          written.push(...writes.map((w) => w.userId));
+          return writes.length;
+        },
+      }),
+    });
+
+    expect(written).toEqual([]);
+    expect(result.notified).toBe(0);
+  });
+
+  it("asks nobody anything when nothing is overdue", async () => {
+    // The common case every night: no recipient query, no write.
+    let askedRecipients = false;
+
+    const result = await service.notifyLateRequests({
+      asOf: new Date("2026-09-01"),
+      repository: stubRepository({
+        findRequestsBecomingLate: async () => [],
+        findRecipients: async () => {
+          askedRecipients = true;
+          return [];
+        },
+      }),
+    });
+
+    expect(result).toEqual({ late: 0, notified: 0 });
+    expect(askedRecipients).toBe(false);
+  });
+});

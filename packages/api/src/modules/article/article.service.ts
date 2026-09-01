@@ -1,12 +1,16 @@
 import type {
   ArticleByIdInput,
   ArticleDetail,
+  ArticleImportError,
+  ArticleImportResult,
+  ArticleImportRow,
   ArticleListInput,
   ArticleListItem,
   CreateArticleInput,
   Page,
   UpdateArticleInput,
 } from "@leoni/contracts";
+import { ARTICLE_IMPORT_COLUMNS, articleImportRowSchema } from "@leoni/contracts";
 import {
   ABC_CLASSES,
   type AbcClass,
@@ -20,7 +24,9 @@ import {
 
 import type { Actor } from "../../context";
 import { assertCanAccessSite, resolveSiteFilter } from "../../middlewares/site-scope";
-import type { AuditPayload } from "../../shared/audit";
+import type { AuditEntry, AuditPayload } from "../../shared/audit";
+import { parseCsv } from "../../shared/csv";
+import { runRecalculation } from "../parameter/parameter.service";
 import * as mapper from "./article.mapper";
 import type { ArticleRepository, StockItemRow } from "./article.repository";
 import { articleRepository } from "./article.repository";
@@ -354,4 +360,271 @@ export async function update({
   });
 
   return { articleId: input.articleId, thresholdsNeedRecalculation };
+}
+
+// --- CSV catalogue import (brief section 6.1) -------------------------------
+
+/**
+ * Validates one parsed row against the column contract.
+ *
+ * The line number counts the header as line 1, so a message points at the row
+ * a spreadsheet editor shows in its gutter. Getting that wrong makes the errors
+ * technically correct and practically useless.
+ */
+function validateRow(
+  raw: Readonly<Record<string, string>>,
+  line: number,
+): { readonly row: ArticleImportRow } | { readonly errors: readonly ArticleImportError[] } {
+  const parsed = articleImportRowSchema.safeParse(raw);
+
+  if (parsed.success) return { row: parsed.data };
+
+  return {
+    errors: parsed.error.issues.map((issue) => ({
+      line,
+      column: typeof issue.path[0] === "string" ? issue.path[0] : null,
+      message: issue.message,
+    })),
+  };
+}
+
+/** Columns the file must carry before a single row is worth reading. */
+function missingHeaders(headers: readonly string[]): readonly ArticleImportError[] {
+  const present = new Set(headers);
+
+  return ARTICLE_IMPORT_COLUMNS.filter((column) => !present.has(column)).map((column) => ({
+    line: 1,
+    column,
+    message: `Colonne absente : ${column}`,
+  }));
+}
+
+/**
+ * References repeated inside one file.
+ *
+ * Caught before the write rather than left to the unique index, because the
+ * index would fail on the *second* occurrence after the first was already
+ * committed — and the whole point of this import is that a bad file changes
+ * nothing.
+ */
+function duplicateReferences(
+  rows: readonly { readonly row: ArticleImportRow; readonly line: number }[],
+): readonly ArticleImportError[] {
+  const seen = new Map<string, number>();
+  const errors: ArticleImportError[] = [];
+
+  for (const { row, line } of rows) {
+    const first = seen.get(row.reference);
+    if (first === undefined) {
+      seen.set(row.reference, line);
+      continue;
+    }
+    errors.push({
+      line,
+      column: "reference",
+      message: `Reference en double dans le fichier (deja ligne ${String(first)})`,
+    });
+  }
+
+  return errors;
+}
+
+/** Site codes the file names that this installation does not have. */
+function unknownSites(
+  rows: readonly { readonly row: ArticleImportRow; readonly line: number }[],
+  siteIdByCode: ReadonlyMap<string, string>,
+): readonly ArticleImportError[] {
+  return rows
+    .filter(({ row }) => !siteIdByCode.has(row.siteCode))
+    .map(({ row, line }) => ({
+      line,
+      column: "siteCode",
+      message: `Site inconnu : ${row.siteCode}`,
+    }));
+}
+
+/**
+ * Imports a catalogue from a CSV export (brief section 6.1).
+ *
+ * **Nothing is written unless every row is valid.** A half-imported catalogue
+ * is the failure mode that costs a day to unpick, and "which rows made it" is
+ * not a question anybody can answer from outside the database. So the file is
+ * validated whole — headers, then rows, then duplicates within the file, then
+ * site codes — and either all of it lands or none of it does, with a line
+ * number against every complaint.
+ *
+ * An existing reference is updated rather than refused. A catalogue export is
+ * the source of truth for designation, pack size and lead time, and re-importing
+ * it after those change upstream is the normal way this is used.
+ *
+ * Thresholds are recomputed afterwards with the `IMPORT` trigger, because a
+ * freshly imported article has none and a changed VPE or lead time invalidates
+ * the ones an existing article had.
+ */
+export async function importFromCsv({
+  actor,
+  content,
+  repository = articleRepository,
+  recalculate = runRecalculation,
+}: {
+  readonly actor: Actor;
+  readonly content: string;
+  readonly repository?: ArticleRepository;
+  /**
+   * Injected for the same reason `repository` is.
+   *
+   * Without this seam the import could not be tested without a database: the
+   * recalculation reaches for its own repository, so every "a valid file is
+   * imported" test would have needed Postgres to assert something that has
+   * nothing to do with thresholds.
+   */
+  readonly recalculate?: typeof runRecalculation;
+}): Promise<ArticleImportResult> {
+  const table = parseCsv(content);
+
+  const headerErrors = missingHeaders(table.headers);
+  if (headerErrors.length > 0) {
+    return { rows: table.rows.length, imported: 0, updated: 0, errors: headerErrors };
+  }
+
+  const validated = table.rows.map((raw, index) => ({
+    ...validateRow(raw, index + 2),
+    line: index + 2,
+  }));
+
+  const rowErrors = validated.flatMap((entry) => ("errors" in entry ? entry.errors : []));
+  const good = validated.flatMap((entry) =>
+    "row" in entry ? [{ row: entry.row, line: entry.line }] : [],
+  );
+
+  const sites = await repository.findSitesWithCodes();
+  const siteIdByCode = new Map(sites.map((site) => [site.code, site.id]));
+
+  const errors = [
+    ...rowErrors,
+    ...duplicateReferences(good),
+    ...unknownSites(good, siteIdByCode),
+  ].sort((left, right) => left.line - right.line);
+
+  if (errors.length > 0) {
+    return { rows: table.rows.length, imported: 0, updated: 0, errors };
+  }
+
+  const written = await writeImportedArticles({ actor, repository, rows: good, siteIdByCode });
+
+  // A new article has no thresholds and a changed VPE invalidates the old ones.
+  await recalculate({ siteId: null, abcClass: null, trigger: "IMPORT", actorId: actor.userId });
+
+  return { rows: table.rows.length, ...written, errors: [] };
+}
+
+/**
+ * One audit entry for an imported row, so the two branches cannot drift.
+ *
+ * A parameter object rather than five positional arguments — past four, the call
+ * site stops being readable without checking the signature, which is the rule
+ * `max-params` exists to enforce.
+ */
+function importAudit(inputs: {
+  readonly actor: Actor;
+  readonly entityId: string;
+  readonly action: string;
+  readonly before: AuditPayload | null;
+  readonly after: AuditPayload;
+}): AuditEntry {
+  return {
+    entity: "Article",
+    entityId: inputs.entityId,
+    action: inputs.action,
+    before: inputs.before,
+    after: inputs.after,
+    actorId: inputs.actor.userId,
+  };
+}
+
+/**
+ * Writes the validated rows, one audited transaction each.
+ *
+ * Per row rather than one transaction for the file, matching
+ * `applyThresholdWithHistory`: the unit that has to be consistent is an article
+ * and the audit row explaining it, and a single transaction over a whole
+ * catalogue would hold locks across every screen for the length of the import.
+ *
+ * The validation pass has already guaranteed every row is writable, so a
+ * failure here is an infrastructure failure rather than a bad file.
+ */
+async function writeImportedArticles(inputs: {
+  readonly actor: Actor;
+  readonly repository: ArticleRepository;
+  readonly rows: readonly { readonly row: ArticleImportRow; readonly line: number }[];
+  readonly siteIdByCode: ReadonlyMap<string, string>;
+}): Promise<{ readonly imported: number; readonly updated: number }> {
+  const { actor, repository, rows, siteIdByCode } = inputs;
+
+
+  const existing = await repository.findByReferences(rows.map(({ row }) => row.reference));
+  const byReference = new Map(existing.map((article) => [article.reference, article]));
+
+  const sites = await repository.findAllSites();
+  let imported = 0;
+  let updated = 0;
+
+  for (const { row } of rows) {
+    const current = byReference.get(row.reference);
+    const master = {
+      designation: row.designation,
+      vpe: row.vpe,
+      leadTimeDays: row.leadTimeDays,
+      abcClass: row.abcClass,
+    };
+
+    if (current === undefined) {
+      await repository.createWithAudit({
+        articleId: crypto.randomUUID(),
+        data: { reference: row.reference, ...master },
+        // A stock row at every plant, for the reason `createWithAudit` states:
+        // every screen reads `StockItem`, so an article without them exists in
+        // the database and nowhere in the interface. The opening quantity lands
+        // at the plant the file named; the others start empty.
+        stockItems: sites.map((site) => ({
+          siteId: site.id,
+          currentStock: site.id === siteIdByCode.get(row.siteCode) ? row.initialStock : 0,
+        })),
+        audit: importAudit({
+          actor,
+          entityId: row.reference,
+          action: "IMPORT_CREATE",
+          before: null,
+          after: { reference: row.reference, ...master },
+        }),
+      });
+      imported += 1;
+      continue;
+    }
+
+    // Two things an import deliberately leaves alone. The opening stock, because
+    // it is an *opening* balance and overwriting a live level with one would
+    // silently discard every movement since. And `isActive`, because archiving
+    // is a deliberate administrative act — a routine re-import of the upstream
+    // catalogue must not quietly resurrect a reference somebody retired.
+    await repository.updateWithAudit({
+      articleId: current.id,
+      data: { ...master, isActive: current.isActive },
+      audit: importAudit({
+        actor,
+        entityId: current.id,
+        action: "IMPORT_UPDATE",
+        before: {
+          designation: current.designation,
+          vpe: current.vpe,
+          leadTimeDays: current.leadTimeDays,
+          abcClass: current.abcClass,
+        },
+        after: master,
+      }),
+    });
+    updated += 1;
+  }
+
+  return { imported, updated };
 }

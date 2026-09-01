@@ -13,6 +13,7 @@ import type { AbcClass, ClassParameters, RecalculationTrigger } from "@leoni/cor
 import {
   ABC_CLASSES,
   BusinessRuleError,
+  classifyAbc,
   computeThresholds,
   defaultParametersForClass,
   NotFoundError,
@@ -78,10 +79,18 @@ function auditPayload(parameters: ClassParameters): AuditPayload {
  * application derives from these four numbers: "who widened the class A safety
  * margin, and from what" has to be answerable months later.
  *
- * The stored thresholds are *not* recomputed here. Editing a parameter and
- * silently rewriting a thousand rows inside a form submission would make the
- * edit slow, unexplainable and hard to undo; the screen tells the
- * administrator to run a recalculation, which leaves its own trail.
+ * The class's thresholds are then recomputed, with the `PARAMETER_CHANGE`
+ * trigger. Without it the edit had no observable effect: `minThreshold` and
+ * `alertLevel` are stored columns computed from these numbers, so every article
+ * in the class kept its old figures — and its old alert level — until somebody
+ * remembered to press Recalculer. A parameter screen whose changes do nothing
+ * until a second, unrelated action is a screen that lies about what it does.
+ *
+ * The recalculation is scoped to the edited class, so an edit to class C does
+ * not re-derive class A. It is not inside the audit transaction: that would
+ * hold a lock on every article in the class for the length of the run, and the
+ * two facts are independently meaningful — the audit row says what was changed,
+ * the history rows say what it did.
  */
 export async function update({
   actor,
@@ -117,6 +126,14 @@ export async function update({
       after: auditPayload(data),
       actorId: actor.userId,
     },
+  });
+
+  await runRecalculation({
+    siteId: resolveSiteFilter(actor, undefined),
+    abcClass: input.abcClass,
+    trigger: "PARAMETER_CHANGE",
+    actorId: actor.userId,
+    repository,
   });
 
   return { abcClass: input.abcClass };
@@ -206,7 +223,8 @@ interface ComputeInputs {
   readonly context: {
     readonly now: Date;
     readonly trigger: RecalculationTrigger;
-    readonly actorId: string;
+    /** Null when the scheduled job ran it rather than a person. */
+    readonly actorId: string | null;
   };
 }
 
@@ -266,33 +284,117 @@ const MAX_WINDOW_DAYS = 90;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
- * Recomputes thresholds from the movement journal (brief section 3.5).
+ * How a recalculation run was reached.
  *
- * The manual trigger. A scheduled run would call exactly this, which is why the
- * trigger is a parameter rather than a constant — wiring a nightly job later is
- * a route handler, not a redesign.
+ * The trigger is a parameter rather than a constant because the same pass is
+ * the answer to four different questions — a person pressing Recalculer, the
+ * nightly job, a parameter edit taking effect, and a catalogue import. Each
+ * writes its own trigger into `ThresholdHistory`, so "why did this threshold
+ * move" is answerable from the row itself.
+ */
+export interface RecalculationRun {
+  readonly siteId: string | null;
+  /** Limit the pass to one class, for a targeted re-tune. */
+  readonly abcClass: AbcClass | null;
+  readonly trigger: RecalculationTrigger;
+  readonly actorId: string | null;
+  /** Injected by the tests. Defaults to the Prisma-backed repository. */
+  readonly repository?: ParameterRepository;
+}
+
+/**
+ * Whether this run may also reclassify.
+ *
+ * Both scopes must be absent. A Pareto is a statement about a whole population,
+ * so ranking a subset and moving articles on the result would use evidence that
+ * excludes most of the catalogue.
+ *
+ * The site check is also an authorisation boundary, not only a statistical one:
+ * `abcClass` is a column on `Article`, shared by both plants, and
+ * `threshold:recalculate` is held by the LTN1 warehouse manager — a single-site
+ * role. Letting their run rewrite a cross-site attribute would hand a
+ * site-scoped permission a global effect. The unscoped runs are the
+ * administrator's and the nightly job's.
+ */
+function mayReclassify(run: RecalculationRun): boolean {
+  return run.abcClass === null && run.siteId === null;
+}
+
+/**
+ * Reclassifies articles by Pareto 80/15/5 (brief section 5, assumption 3).
+ *
+ * Runs *before* the thresholds on purpose: the class chooses which parameters
+ * govern an article, so an article promoted to A must draw class A's safety
+ * days in the same run. Two passes in the other order would leave every moved
+ * article one run behind its own parameters.
+ *
+ * Returns how many actually moved. Only the changes are written — reasserting a
+ * class an article already has would fill the audit log with non-events.
+ */
+async function reclassify(
+  run: RecalculationRun,
+  repository: ParameterRepository,
+  since: Date,
+): Promise<number> {
+  const consumption = await repository.findConsumptionByArticle(since);
+  const targets = await repository.findRecalculationTargets(null, null);
+
+  const currentClassByArticle = new Map(
+    targets.map((target) => [target.article.id, target.article.abcClass]),
+  );
+
+  const writes = classifyAbc(consumption)
+    .filter((classification) => {
+      const current = currentClassByArticle.get(classification.articleId);
+      return current !== undefined && current !== classification.abcClass;
+    })
+    .map((classification) => ({
+      articleId: classification.articleId,
+      abcClass: classification.abcClass,
+      audit: {
+        entity: "Article",
+        entityId: classification.articleId,
+        action: "RECLASSIFY",
+        before: { abcClass: currentClassByArticle.get(classification.articleId) ?? null },
+        after: {
+          abcClass: classification.abcClass,
+          consumptionValue: classification.consumptionValue,
+          cumulativeShare: classification.cumulativeShare,
+        },
+        actorId: run.actorId,
+      },
+    }));
+
+  await repository.applyAbcClasses(writes);
+
+  return writes.length;
+}
+
+/**
+ * Recomputes thresholds from the movement journal (brief section 3.5).
  *
  * One transaction per article rather than one for the run: the unit that has to
  * be consistent is a stock item and its history row, and a single transaction
  * over the whole catalogue would hold locks across every screen in the
  * application while it ran.
  */
-export async function recalculate({
-  actor,
-  input,
-  repository = parameterRepository,
-}: ServiceParams<RecalculateInput>): Promise<RecalculationResult> {
-  const siteId = resolveSiteFilter(actor, input.siteId);
+export async function runRecalculation(run: RecalculationRun): Promise<RecalculationResult> {
+  const repository = run.repository ?? parameterRepository;
   const now = new Date();
+  const since = new Date(now.getTime() - MAX_WINDOW_DAYS * MILLISECONDS_PER_DAY);
+
+  const reclassified = mayReclassify(run) ? await reclassify(run, repository, since) : 0;
 
   const [targets, byClass] = await Promise.all([
-    repository.findRecalculationTargets(siteId, input.abcClass ?? null),
+    // Read after the reclassification, so a moved article is governed by the
+    // class it has just been given rather than the one it is leaving.
+    repository.findRecalculationTargets(run.siteId, run.abcClass),
     parametersByClass(repository),
   ]);
 
   const samples = await repository.findConsumptionSamples(
     targets.map((target) => target.id),
-    new Date(now.getTime() - MAX_WINDOW_DAYS * MILLISECONDS_PER_DAY),
+    since,
   );
 
   const samplesByStockItem = groupSamples(samples);
@@ -304,7 +406,7 @@ export async function recalculate({
       target,
       parameters: effectiveParameters(target, byClass),
       samples: samplesByStockItem.get(target.id) ?? [],
-      context: { now, trigger: "MANUAL", actorId: actor.userId },
+      context: { now, trigger: run.trigger, actorId: run.actorId },
     });
 
     if (hasChanged(target, write)) changed += 1;
@@ -313,7 +415,22 @@ export async function recalculate({
     await repository.applyThresholdWithHistory(write);
   }
 
-  return { evaluated: targets.length, changed, nowCritical, runAt: now };
+  return { evaluated: targets.length, changed, nowCritical, reclassified, runAt: now };
+}
+
+/** The manual trigger: the Recalculer button on the Parameters screen. */
+export async function recalculate({
+  actor,
+  input,
+  repository = parameterRepository,
+}: ServiceParams<RecalculateInput>): Promise<RecalculationResult> {
+  return runRecalculation({
+    siteId: resolveSiteFilter(actor, input.siteId),
+    abcClass: input.abcClass ?? null,
+    trigger: "MANUAL",
+    actorId: actor.userId,
+    repository,
+  });
 }
 
 /**

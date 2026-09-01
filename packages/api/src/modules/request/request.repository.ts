@@ -1,15 +1,10 @@
 import type { RequestListInput } from "@leoni/contracts";
-import type {
-  AlertLevel,
-  NotificationType,
-  RequestPriority,
-  RequestStatus,
-  Role,
-} from "@leoni/core";
+import type { AlertLevel, RequestPriority, RequestStatus, Role } from "@leoni/core";
 import type { Prisma } from "@leoni/db";
 import { db } from "@leoni/db";
 
 import { guarded } from "../../shared/conflict";
+import type { NotificationWrite } from "../../shared/notification";
 
 /**
  * Persistence for the request workflow.
@@ -206,6 +201,24 @@ export async function findLastRequestCode(year: number): Promise<string | null> 
   return last?.code ?? null;
 }
 
+/**
+ * Who to tell about a stock event at one plant.
+ *
+ * By site rather than by role, unlike `findRecipients` below: a shortage is
+ * about a shelf in a building, so the building is the right question. Cross-site
+ * accounts are excluded on purpose — the administrator and the logistics manager
+ * watch the alert board, and copying them on every article that crosses its
+ * reorder point is how a bell menu stops being read.
+ */
+export async function findSiteRecipients(siteId: string): Promise<readonly string[]> {
+  const users = await db.user.findMany({
+    where: { siteId, isActive: true },
+    select: { id: true },
+  });
+
+  return users.map((user) => user.id);
+}
+
 export async function findRecipients(roles: readonly Role[]): Promise<readonly string[]> {
   const users = await db.user.findMany({
     // ponytail: role implies plant today (LTN1_STOREKEEPER is at LTN1). A third
@@ -217,14 +230,15 @@ export async function findRecipients(roles: readonly Role[]): Promise<readonly s
   return users.map((user) => user.id);
 }
 
-/** A notification the service asked for, written with the change that caused it. */
-export interface NotificationWrite {
-  readonly userId: string;
-  readonly type: NotificationType;
-  readonly title: string;
-  readonly body: string | null;
-  readonly payload: Prisma.InputJsonValue;
-}
+/**
+ * A notification the service asked for, written with the change that caused it.
+ *
+ * Re-exported from `shared/notification` rather than declared twice: the stock
+ * module raises the same kind of row from its own transaction, and two shapes
+ * would be two ways for the notification centre to receive a payload it cannot
+ * render.
+ */
+export type { NotificationWrite } from "../../shared/notification";
 
 export interface LineQuantityWrite {
   readonly lineId: string;
@@ -352,6 +366,74 @@ export interface StockEntryWrite {
   readonly alertLevel: AlertLevel;
 }
 
+/** One lot the dispatch draws from, and what it must still hold to be valid. */
+export interface LotDrawWrite {
+  readonly lotId: string;
+  /** The lot's quantity after the draw, not the amount taken. */
+  readonly quantity: number;
+  readonly expectedQuantity: number;
+}
+
+/**
+ * What a dispatch takes off the supplying plant's books.
+ *
+ * The mirror of `StockEntryWrite`. It draws from existing lots rather than
+ * creating one, which is the whole difference between goods arriving and goods
+ * leaving: an entry needs a shelf to go on, an exit needs to know which boxes
+ * were picked.
+ */
+export interface StockExitWrite {
+  readonly articleId: string;
+  readonly movementId: string;
+  readonly stockItemId: string;
+  readonly quantity: number;
+  readonly expectedCurrentStock: number;
+  readonly newStock: number;
+  readonly alertLevel: AlertLevel;
+  readonly lotDraws: readonly LotDrawWrite[];
+  /** The oldest lot drawn from — the shelf a picker actually went to. */
+  readonly drawnFromLotId: string | null;
+}
+
+/**
+ * One end of a transfer, in the shape the transaction writes.
+ *
+ * Both directions reduce to the same three statements — settle the lots, write
+ * the journal row, move the level — so they are written once. The differences
+ * are data: an arrival creates the lot it lands in, a dispatch draws down lots
+ * that already exist, and the movement type says which happened.
+ *
+ * Mapping the two plans onto this before the transaction keeps every `db.` call
+ * inline in the statement list, which `audited-writes.test.ts` requires: it
+ * reads this source to check that a `stockItem` mutation sits in a span that
+ * also writes `stockMovement`, and a helper containing the calls would hide the
+ * pairing from the only thing that verifies it.
+ *
+ * The statements are emitted lots-first, and that order is load-bearing: a
+ * statement list runs in order and Postgres checks the foreign key immediately,
+ * so a movement created before the lot it points at fails on
+ * `stock_movement_lotId_fkey` — which is exactly what happened the first time
+ * this met a real database.
+ */
+interface TransferLeg {
+  readonly movementId: string;
+  readonly stockItemId: string;
+  readonly type: "TRANSFER_IN" | "TRANSFER_OUT";
+  readonly quantity: number;
+  readonly expectedCurrentStock: number;
+  readonly newStock: number;
+  readonly alertLevel: AlertLevel;
+  /**
+   * The lot an arrival lands in. A list rather than a nullable single so both
+   * lot cases read the same way in the statement list — one `.map()` each.
+   */
+  readonly lotsToCreate: readonly { readonly id: string; readonly storageLocationId: string }[];
+  /** Set on a dispatch: the lots the goods were picked from, oldest first. */
+  readonly lotDraws: readonly LotDrawWrite[];
+  /** The lot the journal row points at. */
+  readonly lotId: string | null;
+}
+
 export interface ApplyTransitionOptions {
   readonly requestId: string;
   readonly fromStatus: RequestStatus;
@@ -366,8 +448,10 @@ export interface ApplyTransitionOptions {
   readonly expectedDeliveryAt: Date | null;
   readonly lineQuantities: readonly LineQuantityWrite[];
   readonly notifications: readonly NotificationWrite[];
-  /** Non-empty only for `confirmReceipt`, which is the one that touches stock. */
+  /** Non-empty only for `confirmReceipt`: goods arriving at the consuming plant. */
   readonly stockEntries: readonly StockEntryWrite[];
+  /** Non-empty only for `ship`: goods leaving the supplying plant. */
+  readonly stockExits: readonly StockExitWrite[];
 }
 
 /** The columns the transition itself changes on the request row. */
@@ -394,6 +478,125 @@ function lineStatements(options: ApplyTransitionOptions) {
   );
 }
 
+/**
+ * The two plans as one list of legs.
+ *
+ * Pure data: no `db.` call appears here, so the statements it feeds stay inside
+ * the transaction span where the audited-writes check can see them.
+ */
+function transferLegs(options: ApplyTransitionOptions): readonly TransferLeg[] {
+  const arrivals = options.stockEntries.map((entry) => ({
+    movementId: entry.movementId,
+    stockItemId: entry.stockItemId,
+    // Not `ENTRY`: goods arriving against a request came from the other plant,
+    // not from outside. `isConsumption` excludes transfers, which is what keeps
+    // an inter-plant move out of either plant's demand average.
+    type: "TRANSFER_IN" as const,
+    quantity: entry.quantity,
+    expectedCurrentStock: entry.expectedCurrentStock,
+    newStock: entry.newStock,
+    alertLevel: entry.alertLevel,
+    lotsToCreate: [{ id: entry.lotId, storageLocationId: entry.storageLocationId }],
+    lotDraws: [],
+    lotId: entry.lotId,
+  }));
+
+  const dispatches = options.stockExits.map((exit) => ({
+    movementId: exit.movementId,
+    stockItemId: exit.stockItemId,
+    type: "TRANSFER_OUT" as const,
+    quantity: exit.quantity,
+    expectedCurrentStock: exit.expectedCurrentStock,
+    newStock: exit.newStock,
+    alertLevel: exit.alertLevel,
+    lotsToCreate: [],
+    lotDraws: exit.lotDraws,
+    lotId: exit.drawnFromLotId,
+  }));
+
+  return [...arrivals, ...dispatches];
+}
+
+/**
+ * The history row a transition leaves behind.
+ *
+ * Only the payload is built here; the `db.requestStatusHistory.create` call
+ * stays inline in the transaction. That split matters:
+ * `audited-writes.test.ts` reads this source for `db.<model>.` calls inside the
+ * `$transaction` span, so moving the *call* into a helper would hide the
+ * status/trail pairing from the only thing that verifies it — while moving the
+ * *field list* out changes nothing it looks at.
+ */
+function historyData(options: ApplyTransitionOptions): Prisma.RequestStatusHistoryUncheckedCreateInput {
+  return {
+    requestId: options.requestId,
+    fromStatus: options.fromStatus,
+    toStatus: options.toStatus,
+    action: options.action,
+    reason: options.reason,
+    userId: options.userId,
+    occurredAt: options.occurredAt,
+  };
+}
+
+/** The journal row for one leg of a transfer. */
+function movementData(
+  leg: TransferLeg,
+  options: ApplyTransitionOptions,
+): Prisma.StockMovementUncheckedCreateInput {
+  return {
+    id: leg.movementId,
+    stockItemId: leg.stockItemId,
+    type: leg.type,
+    quantity: leg.quantity,
+    occurredAt: options.occurredAt,
+    reference: options.requestId,
+    userId: options.userId,
+    lotId: leg.lotId,
+  };
+}
+
+/** The lot an arrival lands in. */
+function arrivalLotData(
+  lot: { readonly id: string; readonly storageLocationId: string },
+  leg: TransferLeg,
+  options: ApplyTransitionOptions,
+): Prisma.StockLotUncheckedCreateInput {
+  return {
+    id: lot.id,
+    stockItemId: leg.stockItemId,
+    storageLocationId: lot.storageLocationId,
+    quantity: leg.quantity,
+    fifoDate: options.occurredAt,
+  };
+}
+
+/**
+ * Writes notifications on their own, for the nightly sweep.
+ *
+ * No accompanying row to be atomic with: a lateness warning records a *date
+ * having passed*, not a change this application made. That is also why it is a
+ * separate method rather than a parameter on `applyTransition` — there is no
+ * transition here to attach it to.
+ */
+export async function recordNotifications(
+  writes: readonly NotificationWrite[],
+): Promise<number> {
+  if (writes.length === 0) return 0;
+
+  const result = await db.notification.createMany({
+    data: writes.map((write) => ({
+      userId: write.userId,
+      type: write.type,
+      title: write.title,
+      body: write.body,
+      payload: { ...write.payload },
+    })),
+  });
+
+  return result.count;
+}
+
 /** The notifications the service asked for, as statements. */
 function notificationStatements(options: ApplyTransitionOptions) {
   return options.notifications.map((notification) =>
@@ -403,7 +606,7 @@ function notificationStatements(options: ApplyTransitionOptions) {
         type: notification.type,
         title: notification.title,
         body: notification.body,
-        payload: notification.payload,
+        payload: { ...notification.payload },
       },
     }),
   );
@@ -411,7 +614,8 @@ function notificationStatements(options: ApplyTransitionOptions) {
 
 /**
  * Applies a transition: the status, its milestone, the line quantities, the
- * history row, any notifications, and — on a receipt — the stock it put away.
+ * history row, any notifications, and the stock it moved — off the supplying
+ * plant on a dispatch, onto the consuming plant on a receipt.
  *
  * All of it in one `db.$transaction`. The rule is not a preference: a status
  * that moved without its history row is a workflow nobody can audit, and a
@@ -429,58 +633,37 @@ export async function applyTransition(options: ApplyTransitionOptions): Promise<
     () =>
       db.$transaction([
         db.replenishmentRequest.update({
-          // The status is part of the key on purpose: this is the same status
-          // the service validated the transition against. If somebody else
-          // moved the request in between, no row matches and the whole
-          // transaction rolls back rather than applying a second time.
+          // The status the service validated against is part of the key: if
+          // somebody else moved the request meanwhile, nothing matches and the
+          // whole transaction rolls back instead of applying twice.
           where: { id: options.requestId, status: options.fromStatus },
           data: transitionData(options),
         }),
 
-        db.requestStatusHistory.create({
-          data: {
-            requestId: options.requestId,
-            fromStatus: options.fromStatus,
-            toStatus: options.toStatus,
-            action: options.action,
-            reason: options.reason,
-            userId: options.userId,
-            occurredAt: options.occurredAt,
-          },
-        }),
+        db.requestStatusHistory.create({ data: historyData(options) }),
 
         ...lineStatements(options),
 
-        // The lot before the movement that points at it: a statement list runs
-        // in order and Postgres checks the foreign key immediately.
-        ...options.stockEntries.flatMap((entry) => [
-          db.stockLot.create({
-            data: {
-              id: entry.lotId,
-              stockItemId: entry.stockItemId,
-              storageLocationId: entry.storageLocationId,
-              quantity: entry.quantity,
-              fifoDate: options.occurredAt,
-            },
-          }),
-          db.stockMovement.create({
-            data: {
-              id: entry.movementId,
-              stockItemId: entry.stockItemId,
-              type: "TRANSFER_IN",
-              quantity: entry.quantity,
-              occurredAt: options.occurredAt,
-              reference: options.requestId,
-              userId: options.userId,
-              lotId: entry.lotId,
-            },
-          }),
+        // Lots first — see `TransferLeg` for why the order is load-bearing.
+        ...transferLegs(options).flatMap((leg) => [
+          ...leg.lotsToCreate.map((lot) =>
+            db.stockLot.create({ data: arrivalLotData(lot, leg, options) }),
+          ),
+          ...leg.lotDraws.map((draw) =>
+            db.stockLot.update({
+              // Guarded on what FIFO allocated against: another picker drawing
+              // from the same lot invalidates this arithmetic.
+              where: { id: draw.lotId, quantity: draw.expectedQuantity },
+              data: { quantity: draw.quantity },
+            }),
+          ),
+          db.stockMovement.create({ data: movementData(leg, options) }),
           db.stockItem.update({
             // Same guard as the status above: `newStock` was computed from
             // `expectedCurrentStock`, so the write is only valid while that is
             // still what the row holds.
-            where: { id: entry.stockItemId, currentStock: entry.expectedCurrentStock },
-            data: { currentStock: entry.newStock, alertLevel: entry.alertLevel },
+            where: { id: leg.stockItemId, currentStock: leg.expectedCurrentStock },
+            data: { currentStock: leg.newStock, alertLevel: leg.alertLevel },
           }),
         ]),
 
@@ -489,6 +672,33 @@ export async function applyTransition(options: ApplyTransitionOptions): Promise<
     "Cette demande a change entre-temps. Rechargez la page et reessayez.",
     { requestId: options.requestId, fromStatus: options.fromStatus },
   );
+}
+
+/**
+ * The supplying plant's stock for the lines being shipped.
+ *
+ * Every lot, oldest first, because a dispatch draws FIFO — unlike
+ * `findReceiptTargets`, which needs only the most recent shelf to put goods
+ * back on. Selecting the whole lot set is the difference between "where does
+ * this live" and "which boxes physically leave".
+ */
+export async function findDispatchTargets(articleIds: readonly string[], siteId: string) {
+  return db.stockItem.findMany({
+    where: { siteId, articleId: { in: [...articleIds] } },
+    select: {
+      id: true,
+      articleId: true,
+      currentStock: true,
+      minThreshold: true,
+      // The level before the dispatch: a notification fires on the crossing.
+      alertLevel: true,
+      article: { select: { abcClass: true, reference: true, designation: true } },
+      lots: {
+        select: { id: true, quantity: true, fifoDate: true },
+        orderBy: { fifoDate: "asc" },
+      },
+    },
+  });
 }
 
 /**
@@ -557,6 +767,59 @@ export async function findAttachmentById(attachmentId: string) {
   });
 }
 
+/**
+ * Open requests past their promised delivery date that nobody has been told about.
+ *
+ * The `NOT` clause is the whole idempotency story. A late request stays late
+ * every night until it arrives, so a job that notified on the state rather than
+ * on the transition would send the same warning daily until people filtered the
+ * bell menu away. Excluding requests that already carry a `REQUEST_LATE`
+ * notification means each one is announced exactly once.
+ *
+ * Terminal statuses are excluded for the reason `assessLateness` gives: a
+ * cancelled request was never going to be delivered and a closed one is settled,
+ * so neither is meaningfully late.
+ */
+export async function findRequestsBecomingLate(asOf: Date) {
+  return db.replenishmentRequest.findMany({
+    where: {
+      expectedDeliveryAt: { lt: asOf },
+      receivedAt: null,
+      status: { notIn: ["CLOSED", "REJECTED", "CANCELLED", "RECEIVED"] },
+      NOT: {
+        // Correlated on the request id in the payload, because `Notification`
+        // has no foreign key to a request — it carries a JSON payload so one
+        // table can serve stock alerts and workflow events alike.
+        id: { in: await notifiedLateRequestIds() },
+      },
+    },
+    select: {
+      id: true,
+      code: true,
+      status: true,
+      expectedDeliveryAt: true,
+      createdById: true,
+      toSiteId: true,
+    },
+  });
+}
+
+/** Requests that already carry a lateness warning. */
+async function notifiedLateRequestIds(): Promise<string[]> {
+  const notifications = await db.notification.findMany({
+    where: { type: "REQUEST_LATE" },
+    select: { payload: true },
+  });
+
+  return notifications.flatMap((notification) => {
+    const payload = notification.payload;
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return [];
+
+    const requestId = Reflect.get(payload, "requestId");
+    return typeof requestId === "string" ? [requestId] : [];
+  });
+}
+
 export interface RecordAttachmentOptions {
   readonly requestId: string;
   readonly fileName: string;
@@ -594,9 +857,13 @@ export const requestRepository = {
   findSites,
   findArticlesForRequest,
   findReceiptTargets,
+  findDispatchTargets,
   findDefaultLocation,
   findParameterForClass,
   findRecipients,
+  findSiteRecipients,
+  findRequestsBecomingLate,
+  recordNotifications,
   findLastRequestCode,
   createWithHistory,
   updateDraft,

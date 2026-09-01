@@ -92,7 +92,9 @@ export {
   type AlertLevel,
   type AlertLevelInputs,
   DEFAULT_WARNING_MARGIN_RATIO,
+  SHORTAGE_LEVELS,
   compareAlertSeverityDesc,
+  crossedIntoShortage,
   isAtLeastAsSevere,
   resolveAlertLevel,
 } from "./replenishment/alert-level";
@@ -160,6 +162,13 @@ export {
 } from "./workflow/request-status";
 export {
   ACTION_PERMISSIONS,
+  CARRIED_FROM_FIELDS,
+  type CarriedFromField,
+  LINE_QUANTITY_FIELDS,
+  type LineQuantityField,
+  QUANTITY_PLANS,
+  type QuantityPlan,
+  quantityPlanFor,
   TRANSITION_ACTIONS,
   TRANSITIONS,
   type TransitionAction,

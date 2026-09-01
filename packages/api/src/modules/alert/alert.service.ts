@@ -6,7 +6,13 @@ import type {
   Page,
 } from "@leoni/contracts";
 import type { AbcClass, AlertLevel, ClassParameters } from "@leoni/core";
-import { ABC_CLASSES, compareAlertSeverityDesc, defaultParametersForClass } from "@leoni/core";
+import {
+  ABC_CLASSES,
+  compareAlertSeverityDesc,
+  daysOfCoverage,
+  defaultParametersForClass,
+  SHORTAGE_LEVELS,
+} from "@leoni/core";
 
 import type { Actor } from "../../context";
 import { resolveSiteFilter } from "../../middlewares/site-scope";
@@ -142,8 +148,6 @@ export async function board({
   };
 }
 
-/** Levels that mean the reorder point is reached: the board's call to action. */
-const ACTIONABLE_LEVELS: readonly AlertLevel[] = ["CRITICAL", "RUPTURE"];
 
 export async function summary({
   actor,
@@ -166,7 +170,61 @@ export async function summary({
     RUPTURE: counts.get("RUPTURE") ?? 0,
   };
 
-  const actionable = ACTIONABLE_LEVELS.reduce((sum, level) => sum + (counts.get(level) ?? 0), 0);
+  // `SHORTAGE_LEVELS` from the domain, not a second list here: "the reorder
+  // point is reached" is one definition, and it also decides who gets notified.
+  const actionable = SHORTAGE_LEVELS.reduce((sum, level) => sum + (counts.get(level) ?? 0), 0);
 
   return { ...byLevel, actionable };
+}
+
+/**
+ * Records today's alert state for every tracked article (brief section 6.5).
+ *
+ * The rupture-rate trend on the dashboard is read from `StockAlertSnapshot`,
+ * and nothing in the running application used to write it — only the seed did,
+ * so the curve was frozen demo data that stopped moving the day the database
+ * was created.
+ *
+ * A daily row per article rather than a running total, because every KPI in
+ * section 6.5 is a question about *change*: "was the rupture rate better last
+ * month" cannot be answered from current state at any price.
+ *
+ * Called by the nightly job after the recalculation, so the level it records is
+ * the one the new thresholds imply rather than yesterday's.
+ */
+export async function captureDailySnapshots({
+  on,
+  repository = alertRepository,
+}: {
+  /** The day being recorded. Passed in: the domain never reads the clock. */
+  readonly on: Date;
+  readonly repository?: AlertRepository;
+}): Promise<{ readonly subjects: number; readonly written: number }> {
+  const subjects = await repository.findSnapshotSubjects();
+
+  // Midnight UTC: the column is a `@db.Date`, and the unique index that makes
+  // this idempotent is on (stockItemId, snapshotDate). A timestamp carrying the
+  // hour the job happened to run would defeat it.
+  const snapshotDate = new Date(
+    Date.UTC(on.getUTCFullYear(), on.getUTCMonth(), on.getUTCDate()),
+  );
+
+  const written = await repository.appendAlertSnapshots(
+    subjects.map((subject) => ({
+      stockItemId: subject.id,
+      // The stored level, not a recomputed one: it was written by the domain in
+      // the same transaction as the change that caused it, and recomputing here
+      // would let the snapshot disagree with the board it summarises.
+      level: subject.alertLevel,
+      currentStock: subject.currentStock,
+      minThreshold: subject.minThreshold.toNumber(),
+      coverageDays: daysOfCoverage(
+        subject.currentStock,
+        subject.averageDailyConsumption.toNumber(),
+      ),
+      snapshotDate,
+    })),
+  );
+
+  return { subjects: subjects.length, written };
 }

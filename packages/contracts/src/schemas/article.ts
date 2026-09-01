@@ -189,3 +189,103 @@ export interface ArticleDetail extends ArticleListItem {
   readonly thresholdHistory: readonly ThresholdHistoryPoint[];
   readonly legacyThresholds: LegacyThresholdComparison;
 }
+
+// --- CSV import (brief section 6.1) -----------------------------------------
+
+/**
+ * The column contract for a catalogue import.
+ *
+ * Defined here rather than inferred from whatever spreadsheet arrives. No real
+ * export was supplied, and guessing at somebody else's column names is how an
+ * import silently maps `delai` onto `vpe` and corrupts the catalogue. The
+ * application states the format and offers a model file; a source system is
+ * mapped onto it once, by hand, outside the application.
+ *
+ * Order is the order of the model file. `siteCode` is last because it is the
+ * only column that is not a property of the article itself — it says which
+ * plant the opening stock belongs to.
+ */
+export const ARTICLE_IMPORT_COLUMNS = [
+  "reference",
+  "designation",
+  "vpe",
+  "leadTimeDays",
+  "abcClass",
+  "initialStock",
+  "siteCode",
+] as const;
+
+export type ArticleImportColumn = (typeof ARTICLE_IMPORT_COLUMNS)[number];
+
+/** French headers for the model file, in the same order. */
+export const ARTICLE_IMPORT_HEADERS_FR: Readonly<Record<ArticleImportColumn, string>> = {
+  reference: "Reference",
+  designation: "Designation",
+  vpe: "VPE",
+  leadTimeDays: "Delai (jours)",
+  abcClass: "Classe ABC",
+  initialStock: "Stock initial",
+  siteCode: "Site",
+};
+
+/** A whole number arriving as text from a spreadsheet cell. */
+const csvIntegerSchema = z
+  .string()
+  .trim()
+  .refine((value) => /^\d+$/.test(value), "Nombre entier positif attendu")
+  .transform((value) => Number(value));
+
+/**
+ * One row of the import file.
+ *
+ * Every field arrives as text, so the coercions are explicit: a spreadsheet has
+ * no types, and `Number("")` is 0 — which would silently import a pack size of
+ * zero and make every proposed quantity a division by nothing.
+ */
+export const articleImportRowSchema = z.object({
+  reference: z
+    .string()
+    .trim()
+    .min(2, "Reference requise")
+    .max(64, "Reference trop longue")
+    .transform((value) => value.toUpperCase()),
+  designation: z.string().trim().min(2, "Designation requise").max(200),
+  vpe: csvIntegerSchema.refine((value) => value > 0, "La VPE doit etre superieure a zero"),
+  leadTimeDays: csvIntegerSchema.refine((value) => value <= 365, "Delai irrealiste"),
+  abcClass: z
+    .string()
+    .trim()
+    .transform((value) => value.toUpperCase())
+    .pipe(abcClassSchema),
+  initialStock: csvIntegerSchema,
+  siteCode: z
+    .string()
+    .trim()
+    .min(2, "Code site requis")
+    .transform((value) => value.toUpperCase()),
+});
+
+export type ArticleImportRow = z.infer<typeof articleImportRowSchema>;
+
+/** What went wrong on one line, addressed the way a spreadsheet numbers it. */
+export interface ArticleImportError {
+  /** 1-based, counting the header as line 1, so it matches the editor's gutter. */
+  readonly line: number;
+  readonly column: string | null;
+  readonly message: string;
+}
+
+/**
+ * The outcome of an import attempt.
+ *
+ * `imported` and `updated` are zero whenever `errors` is non-empty: the whole
+ * file is validated before anything is written. A half-imported catalogue is
+ * the failure mode that costs a day to unpick, and "which rows made it" is not
+ * a question anybody can answer from the outside.
+ */
+export interface ArticleImportResult {
+  readonly rows: number;
+  readonly imported: number;
+  readonly updated: number;
+  readonly errors: readonly ArticleImportError[];
+}

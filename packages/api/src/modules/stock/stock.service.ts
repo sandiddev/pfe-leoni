@@ -14,6 +14,7 @@ import {
   allocateFifo,
   applyMovement,
   BusinessRuleError,
+  crossedIntoShortage,
   defaultParametersForClass,
   InvalidInputError,
   NotFoundError,
@@ -23,6 +24,8 @@ import {
 
 import type { Actor } from "../../context";
 import { assertCanAccessSite, resolveSiteFilter } from "../../middlewares/site-scope";
+import type { NotificationWrite } from "../../shared/notification";
+import { planShortageNotifications } from "../../shared/notification";
 import * as mapper from "./stock.mapper";
 import type { LotWrite, StockRepository } from "./stock.repository";
 import { stockRepository } from "./stock.repository";
@@ -188,6 +191,71 @@ interface WriteMovementInputs {
 }
 
 /**
+ * Refuses a movement that would take the level below zero.
+ *
+ * Refused rather than clamped: a negative stock is not a state the shop floor
+ * can be in, and silently clamping to zero hides the discrepancy that caused it
+ * instead of putting it in front of a human.
+ */
+function assertStockSufficient(
+  movement: { readonly currentStock: number; readonly type: MovementType; readonly quantity: number },
+  article: { readonly articleId: string; readonly reference: string },
+): void {
+  if (!wouldGoNegative(movement)) return;
+
+  throw new BusinessRuleError(
+    `Stock insuffisant pour ${article.reference} : ` +
+      `${String(movement.quantity)} unites demandees, ${String(movement.currentStock)} en stock.`,
+    {
+      articleId: article.articleId,
+      requested: movement.quantity,
+      available: movement.currentStock,
+    },
+  );
+}
+
+/**
+ * Who to tell, when a movement takes an article into shortage.
+ *
+ * Extracted from `writeMovement` so that function stays about the movement.
+ * `crossedIntoShortage` in the domain owns what counts as news, so this path,
+ * the dispatch to LTN1 and the nightly recalculation all agree — an article
+ * that was already critical and received another exit is not news, and one
+ * notification per movement is how a bell menu becomes something people mute.
+ *
+ * Recipients are only resolved once something has crossed: most movements cross
+ * nothing, and a query per movement for an empty list is a query for nothing.
+ */
+async function planMovementShortages(inputs: {
+  readonly repository: StockRepository;
+  readonly stockItem: {
+    readonly siteId: string;
+    readonly alertLevel: AlertLevel;
+    readonly minThreshold: { toNumber: () => number };
+    readonly article: { readonly id: string; readonly reference: string; readonly designation: string };
+  };
+  readonly newStock: number;
+  readonly alertLevel: AlertLevel;
+}): Promise<readonly NotificationWrite[]> {
+  const { repository, stockItem, newStock, alertLevel } = inputs;
+
+  if (!crossedIntoShortage(stockItem.alertLevel, alertLevel)) return [];
+
+  return planShortageNotifications({
+    from: stockItem.alertLevel,
+    to: alertLevel,
+    subject: {
+      articleId: stockItem.article.id,
+      reference: stockItem.article.reference,
+      designation: stockItem.article.designation,
+      newStock,
+      minThreshold: stockItem.minThreshold.toNumber(),
+    },
+    recipients: await repository.findSiteRecipients(stockItem.siteId),
+  });
+}
+
+/**
  * The one path every movement takes.
  *
  * `record` and `adjust` differ only in their permission and in whether the
@@ -208,13 +276,10 @@ async function writeMovement(inputs: WriteMovementInputs): Promise<RecordMovemen
   const previousStock = stockItem.currentStock;
   const movement = { currentStock: previousStock, type, quantity: details.quantity };
 
-  if (wouldGoNegative(movement)) {
-    throw new BusinessRuleError(
-      `Stock insuffisant pour ${stockItem.article.reference} : ` +
-        `${String(details.quantity)} unites demandees, ${String(previousStock)} en stock.`,
-      { articleId: details.articleId, requested: details.quantity, available: previousStock },
-    );
-  }
+  assertStockSufficient(movement, {
+    articleId: details.articleId,
+    reference: stockItem.article.reference,
+  });
 
   const newStock = applyMovement(movement);
   const occurredAt = details.occurredAt ?? new Date();
@@ -250,6 +315,13 @@ async function writeMovement(inputs: WriteMovementInputs): Promise<RecordMovemen
   const movementId = crypto.randomUUID();
   const newLotId = lotWrites.some((write) => write.kind === "create") ? crypto.randomUUID() : null;
 
+  const notifications = await planMovementShortages({
+    repository,
+    stockItem,
+    newStock,
+    alertLevel,
+  });
+
   await repository.recordMovementWithStockUpdate({
     movementId,
     newLotId,
@@ -264,6 +336,7 @@ async function writeMovement(inputs: WriteMovementInputs): Promise<RecordMovemen
     expectedCurrentStock: previousStock,
     newStock,
     alertLevel,
+    notifications,
   });
 
   return { movementId, stockItemId: stockItem.id, previousStock, newStock, alertLevel };

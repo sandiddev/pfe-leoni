@@ -64,7 +64,11 @@ export function RequestDetailView({ request, canComment }: RequestDetailViewProp
             </p>
           )}
 
-          <RequestActionBar requestId={request.id} actions={request.availableActions} />
+          <RequestActionBar
+            requestId={request.id}
+            actions={request.availableActions}
+            lines={request.lines}
+          />
         </CardContent>
       </Card>
 

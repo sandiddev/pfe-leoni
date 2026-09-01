@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import {
   articleByIdInputSchema,
   articleListInputSchema,
@@ -50,4 +52,18 @@ export const articleRouter = createTRPCRouter({
   update: permissionProcedure("article:write")
     .input(updateArticleInputSchema)
     .mutation(async ({ ctx, input }) => service.update({ actor: ctx.actor, input })),
+
+  /**
+   * Imports a catalogue from a CSV export (brief section 6.1).
+   *
+   * Takes the already-decoded text rather than the file: multipart is the route
+   * handler's problem, and a procedure that took bytes would need to know about
+   * encodings to be callable from a test. Same permission as creating one
+   * article by hand — an import creates and edits master data.
+   */
+  import: permissionProcedure("article:write")
+    .input(z.object({ content: z.string().min(1, "Fichier vide").max(5_000_000) }))
+    .mutation(async ({ ctx, input }) =>
+      service.importFromCsv({ actor: ctx.actor, content: input.content }),
+    ),
 });

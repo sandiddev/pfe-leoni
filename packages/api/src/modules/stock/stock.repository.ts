@@ -4,6 +4,7 @@ import type { Prisma } from "@leoni/db";
 import { db } from "@leoni/db";
 
 import { guarded } from "../../shared/conflict";
+import type { NotificationWrite } from "../../shared/notification";
 
 /**
  * Persistence for the stock module.
@@ -147,7 +148,10 @@ export async function findStockItemForMovement(articleId: string, siteId: string
       currentStock: true,
       minThreshold: true,
       siteId: true,
-      article: { select: { id: true, reference: true, abcClass: true } },
+      // The level before the movement: a notification fires on the *crossing*
+      // into shortage, not on the state, so the previous value is required.
+      alertLevel: true,
+      article: { select: { id: true, reference: true, designation: true, abcClass: true } },
       lots: {
         where: { quantity: { gt: 0 } },
         select: { id: true, quantity: true, fifoDate: true },
@@ -178,6 +182,27 @@ export async function findStorageLocationById(storageLocationId: string) {
  * ask for a lot with no location — which the foreign key would refuse at
  * runtime instead of the compiler refusing it here.
  */
+/**
+ * Who to tell about a stock event at one plant.
+ *
+ * By site rather than by role. `findRecipients` in the request module resolves
+ * roles instead and carries a `ponytail:` note that role implies plant today —
+ * true, and it is the assumption a third site breaks. A shortage is about a
+ * shelf in a building, so the building is the right question to ask.
+ *
+ * Cross-site accounts are deliberately excluded: the administrator and the
+ * logistics manager watch the alert board, and copying them on every article
+ * that crosses its reorder point is how the bell menu stops being read.
+ */
+export async function findSiteRecipients(siteId: string): Promise<readonly string[]> {
+  const users = await db.user.findMany({
+    where: { siteId, isActive: true },
+    select: { id: true },
+  });
+
+  return users.map((user) => user.id);
+}
+
 export type LotWrite =
   | {
       readonly kind: "create";
@@ -208,6 +233,8 @@ export interface RecordMovementOptions {
   readonly lotWrites: readonly LotWrite[];
   /** Identifier for a lot the service asked to create, if any. */
   readonly newLotId: string | null;
+  /** Decided by the service; written in the same transaction as the movement. */
+  readonly notifications: readonly NotificationWrite[];
   /** The level the service read and computed `newStock` from. */
   readonly expectedCurrentStock: number;
   readonly newStock: number;
@@ -279,6 +306,20 @@ export async function recordMovementWithStockUpdate(
           where: { id: stockItemId, currentStock: options.expectedCurrentStock },
           data: { currentStock: newStock, alertLevel },
         }),
+
+        // In the same transaction as the level that caused them: a notification
+        // written by a second call can announce a movement that rolled back.
+        ...options.notifications.map((notification) =>
+          db.notification.create({
+            data: {
+              userId: notification.userId,
+              type: notification.type,
+              title: notification.title,
+              body: notification.body,
+              payload: { ...notification.payload },
+            },
+          }),
+        ),
       ]),
     "Le stock de cet article a change entre-temps. Rechargez la page et reessayez.",
     { stockItemId },
@@ -286,6 +327,7 @@ export async function recordMovementWithStockUpdate(
 }
 
 export const stockRepository = {
+  findSiteRecipients,
   findMovements,
   findLotsByLocation,
   findStorageLocations,
