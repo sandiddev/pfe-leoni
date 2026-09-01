@@ -140,8 +140,18 @@ export async function findStorageLocations(siteId: string | null) {
  * alert level from the new stock and cannot ask the database a second question
  * between deciding and writing.
  */
+/**
+ * The stock item a movement is about, with `Decimal` already unwrapped.
+ *
+ * The conversion happens here rather than in the service, because
+ * `minThreshold` is `Decimal(12,3)` in Postgres and `Decimal` is a Prisma
+ * runtime class. A service that unwraps it knows a persistence detail, and the
+ * cost is not theoretical: the service tests had to `import { Prisma }` and
+ * build `new Prisma.Decimal(...)` fixtures, which is the opposite of the
+ * "plain object stub and no Postgres" seam CLAUDE.md section 3 describes.
+ */
 export async function findStockItemForMovement(articleId: string, siteId: string | null) {
-  return db.stockItem.findFirst({
+  const row = await db.stockItem.findFirst({
     where: { articleId, ...(siteId === null ? {} : { siteId }) },
     select: {
       id: true,
@@ -160,10 +170,22 @@ export async function findStockItemForMovement(articleId: string, siteId: string
     },
     orderBy: { site: { code: "asc" } },
   });
+
+  return row === null ? null : { ...row, minThreshold: row.minThreshold.toNumber() };
 }
 
+/** The class parameters in force, as numbers the domain can use directly. */
 export async function findParameterForClass(abcClass: "A" | "B" | "C") {
-  return db.replenishmentParameter.findUnique({ where: { abcClass } });
+  const row = await db.replenishmentParameter.findUnique({ where: { abcClass } });
+
+  return row === null
+    ? null
+    : {
+        safetyDays: row.safetyDays.toNumber(),
+        extraCoverageDays: row.extraCoverageDays.toNumber(),
+        averagingWindowDays: row.averagingWindowDays,
+        warningMarginRatio: row.warningMarginRatio.toNumber(),
+      };
 }
 
 export async function findStorageLocationById(storageLocationId: string) {
@@ -209,6 +231,9 @@ export type LotWrite =
       readonly storageLocationId: string;
       readonly quantity: number;
       readonly fifoDate: Date;
+      /** Supplier batch, when the storekeeper recorded one. */
+      readonly batchReference: string | null;
+      readonly supplierReference: string | null;
     }
   | {
       readonly kind: "draw";
@@ -253,9 +278,7 @@ export interface RecordMovementOptions {
  * movement can point at the lot it created in the same statement list, without
  * a round trip in the middle of the transaction.
  */
-export async function recordMovementWithStockUpdate(
-  options: RecordMovementOptions,
-): Promise<void> {
+export async function recordMovementWithStockUpdate(options: RecordMovementOptions): Promise<void> {
   const { stockItemId, lotWrites, newLotId, newStock, alertLevel } = options;
 
   const drawnFrom = lotWrites.find((write) => write.kind === "draw")?.lotId ?? null;
@@ -276,6 +299,8 @@ export async function recordMovementWithStockUpdate(
                   storageLocationId: write.storageLocationId,
                   quantity: write.quantity,
                   fifoDate: write.fifoDate,
+                  batchReference: write.batchReference,
+                  supplierReference: write.supplierReference,
                 },
               })
             : db.stockLot.update({

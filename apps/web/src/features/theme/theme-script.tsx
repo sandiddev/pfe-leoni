@@ -13,6 +13,11 @@
  * that drift apart.
  *
  * `suppressHydrationWarning` on `<html>` covers the attribute this adds.
+ *
+ * The nonce comes from the middleware, which mints one per request for the
+ * Content-Security-Policy. Without it this script is exactly what a strict CSP
+ * blocks — and the alternative, `'unsafe-inline'`, would be a policy that looks
+ * present in a header and stops nothing.
  */
 const SCRIPT = `
 (function () {
@@ -29,6 +34,11 @@ const SCRIPT = `
 })();
 `;
 
-export function ThemeScript() {
-  return <script dangerouslySetInnerHTML={{ __html: SCRIPT }} />;
+export interface ThemeScriptProps {
+  /** Per-request CSP nonce, read from the `x-nonce` header by the layout. */
+  readonly nonce: string | undefined;
+}
+
+export function ThemeScript({ nonce }: ThemeScriptProps) {
+  return <script nonce={nonce} dangerouslySetInnerHTML={{ __html: SCRIPT }} />;
 }

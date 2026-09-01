@@ -22,6 +22,7 @@ import { ARTICLE_IMPORT_COLUMNS, ARTICLE_IMPORT_HEADERS_FR } from "@leoni/contra
 const EXAMPLE_ROW: Readonly<Record<(typeof ARTICLE_IMPORT_COLUMNS)[number], string>> = {
   reference: "BTR-10413",
   designation: "Boitier connecteur 12 voies",
+  unit: "PIECE",
   vpe: "250",
   leadTimeDays: "2",
   abcClass: "A",

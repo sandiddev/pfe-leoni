@@ -64,9 +64,7 @@ export function planShortageNotifications(inputs: {
 
   const type: NotificationType = to === "RUPTURE" ? "STOCK_RUPTURE" : "STOCK_CRITICAL";
   const title =
-    to === "RUPTURE"
-      ? `Rupture : ${subject.reference}`
-      : `Stock critique : ${subject.reference}`;
+    to === "RUPTURE" ? `Rupture : ${subject.reference}` : `Stock critique : ${subject.reference}`;
 
   return recipients.map((userId) => ({
     userId,

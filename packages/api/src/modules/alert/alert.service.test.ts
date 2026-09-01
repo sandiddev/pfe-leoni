@@ -80,6 +80,7 @@ function row(options: RowOptions = {}): AlertRow {
       reference,
       designation: `Article ${reference}`,
       abcClass: "A",
+      unit: "PIECE" as const,
       vpe: 100,
       leadTimeDays: 2,
       isActive: true,
@@ -88,14 +89,9 @@ function row(options: RowOptions = {}): AlertRow {
   };
 }
 
-/** A written article-level override, in the shape Prisma returns it. */
+/** A written article-level override, as the repository hands it over. */
 function override(safetyDays: number, extraCoverageDays: number) {
-  return {
-    safetyDays: new Prisma.Decimal(safetyDays),
-    extraCoverageDays: new Prisma.Decimal(extraCoverageDays),
-    averagingWindowDays: 30,
-    warningMarginRatio: new Prisma.Decimal(0.2),
-  };
+  return { safetyDays, extraCoverageDays, averagingWindowDays: 30, warningMarginRatio: 0.2 };
 }
 
 const boardInput = { limit: 25, cursor: null, includeNormal: false } as const;
@@ -117,11 +113,7 @@ describe("alert board - ordering", () => {
       }),
     });
 
-    expect(page.items.map((item) => item.alertLevel)).toEqual([
-      "RUPTURE",
-      "CRITICAL",
-      "WARNING",
-    ]);
+    expect(page.items.map((item) => item.alertLevel)).toEqual(["RUPTURE", "CRITICAL", "WARNING"]);
   });
 
   it("puts the article that runs out soonest first within one severity", async () => {
@@ -360,25 +352,15 @@ describe("alert summary", () => {
 });
 
 function parameterRow() {
-  return {
-    id: "parameter-a",
-    abcClass: "A" as const,
-    articleId: null,
-    safetyDays: new Prisma.Decimal(1),
-    extraCoverageDays: new Prisma.Decimal(10),
-    averagingWindowDays: 30,
-    warningMarginRatio: new Prisma.Decimal(0.2),
-    createdAt: new Date("2026-01-01"),
-    updatedAt: new Date("2026-01-01"),
-  };
+  return { safetyDays: 1, extraCoverageDays: 10, averagingWindowDays: 30, warningMarginRatio: 0.2 };
 }
 
 describe("daily alert snapshots (brief section 6.5)", () => {
   const subject = (overrides: Record<string, unknown> = {}) => ({
     id: "stock-1",
     currentStock: 900,
-    minThreshold: new Prisma.Decimal(1_000),
-    averageDailyConsumption: new Prisma.Decimal(300),
+    minThreshold: 1_000,
+    averageDailyConsumption: 300,
     alertLevel: "CRITICAL" as const,
     ...overrides,
   });
@@ -430,8 +412,8 @@ describe("daily alert snapshots (brief section 6.5)", () => {
       on: new Date("2026-09-01T00:00:00Z"),
       repository: stubRepository({
         findSnapshotSubjects: async () => [
-          subject({ currentStock: 900, averageDailyConsumption: new Prisma.Decimal(300) }),
-          subject({ id: "stock-2", averageDailyConsumption: new Prisma.Decimal(0) }),
+          subject({ currentStock: 900, averageDailyConsumption: 300 }),
+          subject({ id: "stock-2", averageDailyConsumption: 0 }),
         ],
         appendAlertSnapshots: async (writes) => {
           written.push(...writes.map((w) => w.coverageDays));

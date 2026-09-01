@@ -115,7 +115,7 @@ export function ArticleImportDialog() {
               </p>
               <a
                 href="/api/articles/modele-import"
-                className="text-xs text-accent underline underline-offset-2"
+                className="text-accent text-xs underline underline-offset-2"
               >
                 Telecharger un fichier modele
               </a>
@@ -128,8 +128,8 @@ export function ArticleImportDialog() {
             {result !== null && result.errors.length > 0 && (
               <div className="space-y-1.5">
                 <p className="text-sm font-medium text-status-critical">
-                  {formatQuantity(result.errors.length)} erreur(s) sur{" "}
-                  {formatQuantity(result.rows)} ligne(s) — aucun article modifie
+                  {formatQuantity(result.errors.length)} erreur(s) sur {formatQuantity(result.rows)}{" "}
+                  ligne(s) — aucun article modifie
                 </p>
                 <ul className="max-h-56 space-y-1 overflow-y-auto text-xs">
                   {result.errors.map((error, index) => (

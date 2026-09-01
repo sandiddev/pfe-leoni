@@ -7,8 +7,10 @@ numbers every time.
 ## Before the room fills up
 
 ```bash
-pnpm docker:up && pnpm db:migrate && pnpm db:seed
+pnpm db:migrate && pnpm db:seed
 ```
+
+Assumes Postgres is already running and `DATABASE_URL` points at it.
 
 ```bash
 pnpm dev
@@ -31,13 +33,13 @@ can fail for a reason nobody has seen.
 
 Password for all five: `Leoni2026!`
 
-| Address | Role | What they can show |
-| --- | --- | --- |
-| `magasinier.ltn1@leoni.tn` | Magasinier LTN1 | Alerts, movements, raising and receiving requests |
+| Address                     | Role                     | What they can show                                |
+| --------------------------- | ------------------------ | ------------------------------------------------- |
+| `magasinier.ltn1@leoni.tn`  | Magasinier LTN1          | Alerts, movements, raising and receiving requests |
 | `responsable.ltn1@leoni.tn` | Responsable magasin LTN1 | Approving, transmitting, recalculating thresholds |
-| `responsable.ltn4@leoni.tn` | Responsable LTN4 | Preparing, shipping, declaring a shortage |
-| `logistique@leoni.tn` | Responsable logistique | Every KPI, both plants, read-only |
-| `admin@leoni.tn` | Administrateur | Articles, sites, shelves, users, audit log |
+| `responsable.ltn4@leoni.tn` | Responsable LTN4         | Preparing, shipping, declaring a shortage         |
+| `logistique@leoni.tn`       | Responsable logistique   | Every KPI, both plants, read-only                 |
+| `admin@leoni.tn`            | Administrateur           | Articles, sites, shelves, users, audit log        |
 
 Keep two browsers (or one plus a private window) open: half the point of the system is that
 five people see different things on the same screen.
@@ -47,7 +49,7 @@ five people see different things on the same screen.
 **1. The problem, as a storekeeper sees it** — sign in as `magasinier.ltn1`.
 
 `/alertes` opens on the board sorted by severity then by remaining coverage. Point out that
-the *Qte preconisee* column is not a guess: hover it and the tooltip reads
+the _Qte preconisee_ column is not a guess: hover it and the tooltip reads
 `Besoin 1 800, soit 4 boite(s) de 500`. That is brief §3.3, computed by `@leoni/core` and
 unit-tested against the exact example in the report.
 
@@ -62,20 +64,39 @@ the process. Press **Soumettre a validation** and watch both disappear — from 
 request only moves through the workflow.
 
 **4. Separation of duties** — as `responsable.ltn1`, open the same request. The action bar
-now shows *Valider* and *Refuser* and nothing else, because the buttons are generated from
-the domain transition table for this role and this exact status. Try *Refuser*: it demands a
+now shows _Valider_ and _Refuser_ and nothing else, because the buttons are generated from
+the domain transition table for this role and this exact status. Try _Refuser_: it demands a
 justification of at least ten characters, and the reason lands in the history.
 
-Validate, then **Transmettre a LTN4**.
+Press **Valider**. A dialog asks for the quantity per line, prefilled with what was
+requested — this is the moment to show that each stage records its *own* figure rather than
+rubber-stamping the last one. Type something that is not a multiple of the pack size and the
+confirm button refuses: LTN4 picks whole boxes. Approve a smaller quantity than was asked
+for, then **Transmettre a LTN4** — which asks for nothing, because transmitting moves no
+goods.
 
-**5. The other plant** — as `responsable.ltn4`, the request is in the queue. *Demarrer la
-preparation*, *Marquer comme prete*, *Expedier*. Show *Declarer une rupture* as well: it is
-the exception path the email process handled by nobody replying.
+**5. The other plant** — as `responsable.ltn4`, the request is in the queue. _Demarrer la
+preparation_, _Marquer comme prete_, _Expedier_ — each asking for its own quantity, each
+prefilled from the stage before.
+
+Show _Declarer une rupture partielle_: it asks for both a quantity and a reason, which is
+exactly what the exception is. Prepare less than was approved and the shortfall stays on the
+line for the rest of the walkthrough — the preparation loop re-reads its own column, so
+marking the pallet ready afterwards does not quietly restore the approved figure.
+
+**Expedier is the moment to open a second window on `/stock` as LTN4.** A dispatch is one
+half of a transfer: it draws the boxes FIFO and takes them off *this* plant's books, with a
+`TRANSFER_OUT` in the journal. The toast says how many units left.
 
 **6. Receipt moves stock** — back as `magasinier.ltn1`, **Confirmer la reception**. The toast
 says how many units went into stock. Open `/stock`: the entry is in the journal, on a shelf,
 with an author and a timestamp. That movement and the status change were written in one
 transaction — a receipt cannot exist without the stock it delivered.
+
+The receipt is the *other* half of the transfer, a `TRANSFER_IN`. Between the dispatch and
+this moment the goods were on neither plant's books, which is what a lorry in motion actually
+means (ADR 0006). Nothing was created and nothing vanished: the two plants together hold what
+they held before.
 
 Close the request. The five quantity columns now read across: asked, authorised, prepared,
 shipped, received.
@@ -85,7 +106,7 @@ shipped, received.
 Sign in as `logistique@leoni.tn` and open `/tableau-de-bord`.
 
 - **Taux de service** — share of requests delivered complete, measured against what was
-  *authorised* rather than what was asked for.
+  _authorised_ rather than what was asked for.
 - **Delai reel contre theorique** — the gap the whole project exists to shrink, computed from
   the milestone timestamps the workflow stamps.
 - **Evolution du taux de rupture** — ninety days of `StockAlertSnapshot`. Say why the table
@@ -94,7 +115,7 @@ Sign in as `logistique@leoni.tn` and open `/tableau-de-bord`.
 - **Exporter (CSV)** — the same figures, generated server-side so the export cannot disagree
   with the chart above it.
 
-Note what this role *cannot* do: no write button anywhere, and `/administration` shows the
+Note what this role _cannot_ do: no write button anywhere, and `/administration` shows the
 audit log but not the user list.
 
 ## Master data, for the administrator
@@ -126,12 +147,19 @@ Sign in as `admin@leoni.tn`.
 
 Say it before you are asked:
 
-- **CSV article import** (§6.1) — the module is scoped, but building a column mapping for a
-  spreadsheet nobody has supplied is guesswork, and a wrong guess corrupts the catalogue.
-- **A nightly scheduler** — recalculation is a button. The mutation is exactly what a cron
-  route would call, so wiring it is a route file and an environment variable.
+- **A column _mapping_ for the CSV import** (§6.1) — the import itself is built, against a
+  column contract this application defines and publishes as a model file. Accepting an
+  arbitrary spreadsheet and mapping its headers is what is not built: guessing at somebody
+  else's column names is how `delai` silently lands in `vpe`. A source export is mapped onto
+  the model once, by hand, outside the application.
 - **E-mail notifications** — no mail server is guaranteed on the LEONI network (§6.2), so the
   in-app centre is the delivery mechanism.
 - **`LATE` as a status** (ADR 0003) — a request can be late while it is still in preparation.
   Storing it would overwrite where the request actually is, so it is derived and shown beside
-  the status.
+  the status. The nightly job _notifies_ about lateness, which writes no status and stamps no
+  row: an always-correct indicator is of no use to somebody who does not open the screen.
+- **Sign-in rate limiting** — a deliberate scope decision, on the one unauthenticated
+  endpoint. Say so rather than being asked.
+- **Browser and component tests** — the workflow is covered end to end by `smoke.ts` against a
+  real database, which cannot see whether a button sends the right payload. That gap is
+  recorded rather than papered over.

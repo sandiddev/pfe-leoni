@@ -46,9 +46,7 @@ export function RequestDetailView({ request, canComment }: RequestDetailViewProp
             <RequestStatusBadge status={request.status} />
             <Badge variant="outline">{PRIORITY_LABELS_FR[request.priority]}</Badge>
             {request.isLate && (
-              <Badge variant="stopped">
-                En retard de {String(request.daysLate)} jour(s)
-              </Badge>
+              <Badge variant="stopped">En retard de {String(request.daysLate)} jour(s)</Badge>
             )}
             <span className="text-sm text-foreground-muted">
               Livraison prevue : {formatDate(request.expectedDeliveryAt)}

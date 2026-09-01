@@ -28,6 +28,7 @@ const boardSelection = {
       reference: true,
       designation: true,
       abcClass: true,
+      unit: true,
       vpe: true,
       leadTimeDays: true,
       isActive: true,
@@ -46,7 +47,65 @@ const boardSelection = {
   },
 } satisfies Prisma.StockItemSelect;
 
-export type AlertRow = Prisma.StockItemGetPayload<{ select: typeof boardSelection }>;
+type BoardRow = Prisma.StockItemGetPayload<{ select: typeof boardSelection }>;
+
+/** The override, once `Decimal` is gone. */
+interface PlainParameter {
+  readonly safetyDays: number;
+  readonly extraCoverageDays: number;
+  readonly averagingWindowDays: number;
+  readonly warningMarginRatio: number;
+}
+
+/**
+ * Spelled out rather than inferred.
+ *
+ * TypeScript cannot *name* the inferred shape without reaching into the
+ * generated Prisma enums directory, which is exactly the reach `@leoni/db`'s
+ * barrel exists to prevent. Declaring the type is cheaper than importing a
+ * symbol only to satisfy the inference.
+ */
+type PlainBoardRow = Omit<BoardRow, "article"> & {
+  readonly article: Omit<BoardRow["article"], "parameter"> & {
+    readonly parameter: PlainParameter | null;
+  };
+};
+
+/**
+ * The article-level parameter override, with `Decimal` already unwrapped.
+ *
+ * The row's own thresholds stay as they come and are converted by the mapper on
+ * the way to the DTO — that is the mapper's job. This one is different: the
+ * override is consumed by the *service*, which hands it to `@leoni/core`, and a
+ * service that unwraps a `Decimal` knows a persistence detail it is not
+ * supposed to (CLAUDE.md section 3, and the header of `stock.prisma`).
+ */
+function withPlainParameters(row: BoardRow): PlainBoardRow {
+  const override = row.article.parameter;
+
+  return {
+    ...row,
+    article: {
+      ...row.article,
+      parameter:
+        override === null
+          ? null
+          : {
+              safetyDays: override.safetyDays.toNumber(),
+              extraCoverageDays: override.extraCoverageDays.toNumber(),
+              averagingWindowDays: override.averagingWindowDays,
+              warningMarginRatio: override.warningMarginRatio.toNumber(),
+            },
+    },
+  };
+}
+
+/**
+ * Derived from the implementation rather than declared beside it, for the same
+ * reason `AlertRepository` is: a hand-written parallel shape is the one that
+ * drifts.
+ */
+export type AlertRow = PlainBoardRow;
 
 /** The three levels that mean something needs attention. */
 const AT_RISK: readonly AlertLevel[] = ["WARNING", "CRITICAL", "RUPTURE"];
@@ -101,7 +160,7 @@ export async function findBoard(options: FindBoardOptions): Promise<{
     db.stockItem.count({ where }),
   ]);
 
-  return { rows, totalCount };
+  return { rows: rows.map(withPlainParameters), totalCount };
 }
 
 /** One grouped count instead of four queries the dashboard used to make. */
@@ -117,13 +176,23 @@ export async function countByLevel(
   return grouped.map((group) => ({ alertLevel: group.alertLevel, count: group._count._all }));
 }
 
+/** The class parameters in force, as numbers the domain can use directly. */
 export async function findParameterForClass(abcClass: AbcClass) {
-  return db.replenishmentParameter.findUnique({ where: { abcClass } });
+  const row = await db.replenishmentParameter.findUnique({ where: { abcClass } });
+
+  return row === null
+    ? null
+    : {
+        safetyDays: row.safetyDays.toNumber(),
+        extraCoverageDays: row.extraCoverageDays.toNumber(),
+        averagingWindowDays: row.averagingWindowDays,
+        warningMarginRatio: row.warningMarginRatio.toNumber(),
+      };
 }
 
 /** Every tracked stock item, with what a daily snapshot has to record. */
 export async function findSnapshotSubjects() {
-  return db.stockItem.findMany({
+  const rows = await db.stockItem.findMany({
     where: { article: { isActive: true } },
     select: {
       id: true,
@@ -133,6 +202,12 @@ export async function findSnapshotSubjects() {
       alertLevel: true,
     },
   });
+
+  return rows.map((row) => ({
+    ...row,
+    minThreshold: row.minThreshold.toNumber(),
+    averageDailyConsumption: row.averageDailyConsumption.toNumber(),
+  }));
 }
 
 /** One day's alert state for one stock item, as the domain computed it. */

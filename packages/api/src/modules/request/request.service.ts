@@ -208,7 +208,6 @@ export async function create({
   return { requestId, code };
 }
 
-
 // --- Planning: what a transition records ------------------------------------
 
 interface PlannableLine {
@@ -324,7 +323,7 @@ interface ReceiptTarget {
   readonly id: string;
   readonly articleId: string;
   readonly currentStock: number;
-  readonly minThreshold: { toNumber: () => number };
+  readonly minThreshold: number;
   readonly article: { readonly abcClass: AbcClass };
   readonly lots: readonly { readonly storageLocationId: string }[];
 }
@@ -390,7 +389,7 @@ function planReceipt(inputs: ReceiptPlanInputs): readonly StockEntryWrite[] {
       newStock,
       alertLevel: resolveAlertLevel({
         currentStock: newStock,
-        min: target.minThreshold.toNumber(),
+        min: target.minThreshold,
         warningMarginRatio,
       }),
     });
@@ -404,14 +403,18 @@ interface DispatchTarget {
   readonly id: string;
   readonly articleId: string;
   readonly currentStock: number;
-  readonly minThreshold: { toNumber: () => number };
+  readonly minThreshold: number;
   readonly alertLevel: AlertLevel;
   readonly article: {
     readonly abcClass: AbcClass;
     readonly reference: string;
     readonly designation: string;
   };
-  readonly lots: readonly { readonly id: string; readonly quantity: number; readonly fifoDate: Date }[];
+  readonly lots: readonly {
+    readonly id: string;
+    readonly quantity: number;
+    readonly fifoDate: Date;
+  }[];
 }
 
 export interface DispatchPlanInputs {
@@ -469,7 +472,7 @@ function planDispatch(inputs: DispatchPlanInputs): readonly StockExitWrite[] {
       newStock,
       alertLevel: resolveAlertLevel({
         currentStock: newStock,
-        min: target.minThreshold.toNumber(),
+        min: target.minThreshold,
         warningMarginRatio,
       }),
       lotDraws: allocations.map((allocation) => ({
@@ -517,8 +520,8 @@ async function buildLines(
     // for: the gap between the two is how the suggestion earns trust.
     const suggestion = computeOrderQuantity({
       currentStock: stockItem.currentStock,
-      min: stockItem.minThreshold.toNumber(),
-      max: stockItem.maxThreshold.toNumber(),
+      min: stockItem.minThreshold,
+      max: stockItem.maxThreshold,
       vpe,
     });
 
@@ -674,7 +677,7 @@ async function loadReceiptInputs(
     warningMarginByClass: new Map(
       parameters.map(({ abcClass, row }) => [
         abcClass,
-        row === null ? null : row.warningMarginRatio.toNumber(),
+        row === null ? null : row.warningMarginRatio,
       ]),
     ),
   };
@@ -701,10 +704,7 @@ async function warningMarginByClass(
   );
 
   return new Map(
-    parameters.map(({ abcClass, row }) => [
-      abcClass,
-      row === null ? null : row.warningMarginRatio.toNumber(),
-    ]),
+    parameters.map(({ abcClass, row }) => [abcClass, row === null ? null : row.warningMarginRatio]),
   );
 }
 
@@ -765,7 +765,7 @@ async function planDispatchShortages(inputs: {
         reference: target.article.reference,
         designation: target.article.designation,
         newStock: exit.newStock,
-        minThreshold: target.minThreshold.toNumber(),
+        minThreshold: target.minThreshold,
       },
       recipients,
     }),
@@ -953,11 +953,25 @@ export async function listAttachments({
  * there, which is worse than a file nobody references — an orphaned file is a
  * cleanup job, an orphaned row is a broken screen.
  */
-export async function recordAttachment({
+/**
+ * Whether this caller may attach a file to this request.
+ *
+ * Exists so the upload route can ask *before* it writes anything to disk. It
+ * used to write the file first and record the row second, on the reasoning that
+ * an orphaned file is a cleanup job while an orphaned row is a broken download
+ * link. True for correctness, and it made disk-filling reachable by anyone with
+ * a session: `proxy.ts` deliberately does not cover `/api`, so the only thing
+ * standing between a stranger's loop and the volume was a 10 MB size cap.
+ *
+ * The same check `recordAttachment` performs, called twice rather than
+ * duplicated — one extra read on an upload, which is rare, and no second
+ * definition of who may attach to what.
+ */
+export async function assertCanAttach({
   actor,
   input,
   repository = requestRepository,
-}: ServiceParams<RecordAttachmentInput>): Promise<{ attachmentId: string }> {
+}: ServiceParams<{ readonly requestId: string }>): Promise<{ readonly allowed: true }> {
   const request = await repository.findById(input.requestId);
 
   if (request === null) {
@@ -967,6 +981,16 @@ export async function recordAttachment({
   }
 
   assertCanSeeRequest(actor, request.fromSiteId, request.toSiteId);
+
+  return { allowed: true };
+}
+
+export async function recordAttachment({
+  actor,
+  input,
+  repository = requestRepository,
+}: ServiceParams<RecordAttachmentInput>): Promise<{ attachmentId: string }> {
+  await assertCanAttach({ actor, input: { requestId: input.requestId }, repository });
 
   const created = await repository.recordAttachment({
     requestId: input.requestId,
@@ -1056,7 +1080,6 @@ export async function comment({
     content: input.content,
   });
 }
-
 
 /**
  * Warns about requests that have passed their promised delivery date.

@@ -36,6 +36,23 @@ export const RECALCULATION_TRIGGERS = [
 ] as const;
 export type RecalculationTrigger = (typeof RECALCULATION_TRIGGERS)[number];
 
+/**
+ * How an article is counted.
+ *
+ * A *label*, not an arithmetic change: quantities stay whole numbers
+ * (`Int` by schema convention), and this says what one of them is a quantity
+ * *of*. A catalogue of connector housings is counted in pieces; wire is issued
+ * by the metre, and a screen that shows `1 200` without saying `m` is a screen
+ * somebody misreads.
+ *
+ * Expressing fractional quantities — 12,5 m off a reel — would mean making
+ * every quantity a `Decimal`, which contradicts the `Never Float` / `Int for
+ * quantities` rule the schema conventions enforce. That is a separate decision
+ * and has not been taken.
+ */
+export const MEASUREMENT_UNITS = ["PIECE", "METRE", "KILOGRAM", "LITRE"] as const;
+export type MeasurementUnit = (typeof MEASUREMENT_UNITS)[number];
+
 /** Urgency declared by the requester. */
 export const REQUEST_PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
 export type RequestPriority = (typeof REQUEST_PRIORITIES)[number];

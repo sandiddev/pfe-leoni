@@ -1,5 +1,5 @@
 import type { ArticleListInput } from "@leoni/contracts";
-import type { AbcClass } from "@leoni/core";
+import type { AbcClass, MeasurementUnit } from "@leoni/core";
 import { db, Prisma } from "@leoni/db";
 
 import type { AuditEntry } from "../../shared/audit";
@@ -34,6 +34,7 @@ const listSelection = {
       reference: true,
       designation: true,
       abcClass: true,
+      unit: true,
       vpe: true,
       leadTimeDays: true,
       isActive: true,
@@ -52,7 +53,56 @@ const listSelection = {
   },
 } satisfies Prisma.StockItemSelect;
 
-export type StockItemRow = Prisma.StockItemGetPayload<{ select: typeof listSelection }>;
+type ListRow = Prisma.StockItemGetPayload<{ select: typeof listSelection }>;
+
+/** The override, once `Decimal` is gone. */
+interface PlainParameter {
+  readonly safetyDays: number;
+  readonly extraCoverageDays: number;
+  readonly averagingWindowDays: number;
+  readonly warningMarginRatio: number;
+}
+
+/**
+ * Spelled out rather than inferred: TypeScript cannot name the inferred shape
+ * without reaching into the generated Prisma enums directory, which is the
+ * reach `@leoni/db`'s barrel exists to prevent.
+ */
+type PlainListRow = Omit<ListRow, "article"> & {
+  readonly article: Omit<ListRow["article"], "parameter"> & {
+    readonly parameter: PlainParameter | null;
+  };
+};
+
+/**
+ * A parameter override with `Decimal` already unwrapped.
+ *
+ * Shared by the list and the detail read, so the two cannot disagree about the
+ * shape the service receives.
+ */
+function plainParameter(override: ListRow["article"]["parameter"]) {
+  return override === null
+    ? null
+    : {
+        safetyDays: override.safetyDays.toNumber(),
+        extraCoverageDays: override.extraCoverageDays.toNumber(),
+        averagingWindowDays: override.averagingWindowDays,
+        warningMarginRatio: override.warningMarginRatio.toNumber(),
+      };
+}
+
+/**
+ * The row's own thresholds stay `Decimal` and are converted by the mapper on
+ * the way to the DTO. The override is different: the *service* feeds it to
+ * `@leoni/core`, and a service that unwraps a `Decimal` knows a persistence
+ * detail it is not supposed to (CLAUDE.md section 3).
+ */
+function withPlainParameter(row: ListRow): PlainListRow {
+  return { ...row, article: { ...row.article, parameter: plainParameter(row.article.parameter) } };
+}
+
+/** Derived from the implementation, so a hand-written shape cannot drift. */
+export type StockItemRow = PlainListRow;
 
 interface FindManyOptions {
   readonly input: ArticleListInput;
@@ -148,20 +198,22 @@ export async function findMany(options: FindManyOptions): Promise<{
     db.stockItem.count({ where }),
   ]);
 
-  return { rows, totalCount };
+  return { rows: rows.map(withPlainParameter), totalCount };
 }
 
 export async function findByArticleAndSite(
   articleId: string,
   siteId: string | null,
 ): Promise<StockItemRow | null> {
-  return db.stockItem.findFirst({
+  const row = await db.stockItem.findFirst({
     where: { articleId, ...(siteId === null ? {} : { siteId }) },
     select: listSelection,
     // Without a site filter a cross-site role gets a deterministic plant rather
     // than whichever row the planner happens to return first.
     orderBy: { site: { code: "asc" } },
   });
+
+  return row === null ? null : withPlainParameter(row);
 }
 
 export async function findLots(stockItemId: string) {
@@ -171,6 +223,8 @@ export async function findLots(stockItemId: string) {
       id: true,
       quantity: true,
       fifoDate: true,
+      batchReference: true,
+      supplierReference: true,
       storageLocation: { select: { code: true } },
     },
     // FIFO: oldest entry first, which is the picking order the brief requires.
@@ -211,16 +265,19 @@ export async function findThresholdHistory(stockItemId: string, limit: number) {
 }
 
 /** The parameters in force for a class, used to recompute a suggestion. */
+/** The class parameters in force, as numbers the domain can use directly. */
 export async function findParameterForClass(abcClass: AbcClass) {
-  return db.replenishmentParameter.findUnique({ where: { abcClass } });
+  return plainParameter(await db.replenishmentParameter.findUnique({ where: { abcClass } }));
 }
 
+/** The article's own override, if one was written, already unwrapped. */
 export async function findParameterForArticle(articleId: string) {
-  return db.replenishmentParameter.findUnique({ where: { articleId } });
+  return plainParameter(await db.replenishmentParameter.findUnique({ where: { articleId } }));
 }
 
 export interface UpdateArticleData {
   readonly designation: string;
+  readonly unit: MeasurementUnit;
   readonly vpe: number;
   readonly leadTimeDays: number;
   readonly abcClass: AbcClass;
@@ -267,6 +324,7 @@ export async function updateWithAudit(options: UpdateArticleOptions): Promise<vo
 export interface CreateArticleData {
   readonly reference: string;
   readonly designation: string;
+  readonly unit: MeasurementUnit;
   readonly vpe: number;
   readonly leadTimeDays: number;
   readonly abcClass: AbcClass;
@@ -335,6 +393,7 @@ export async function findByReferences(references: readonly string[]) {
       id: true,
       reference: true,
       designation: true,
+      unit: true,
       vpe: true,
       leadTimeDays: true,
       abcClass: true,
@@ -366,6 +425,7 @@ export async function findRawArticle(articleId: string) {
     where: { id: articleId },
     select: {
       designation: true,
+      unit: true,
       vpe: true,
       leadTimeDays: true,
       abcClass: true,

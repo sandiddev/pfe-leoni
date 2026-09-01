@@ -1,4 +1,4 @@
-import type { AbcClass } from "@leoni/core";
+import type { AbcClass, MeasurementUnit } from "@leoni/core";
 
 /**
  * A synthetic but realistic article catalogue for an automotive wiring-harness
@@ -18,6 +18,7 @@ import type { AbcClass } from "@leoni/core";
 export interface SeedArticle {
   readonly reference: string;
   readonly designation: string;
+  readonly unit: MeasurementUnit;
   readonly vpe: number;
   readonly leadTimeDays: number;
   readonly abcClass: AbcClass;
@@ -52,6 +53,14 @@ interface Family {
   readonly variants: readonly [string, ...string[]];
   /** Units per box actually used for this kind of part. Non-empty by type. */
   readonly packSizes: readonly [number, ...number[]];
+  /**
+   * How the family is counted.
+   *
+   * Cable and conduit are cut from a reel and issued by the metre; everything
+   * else is discrete. Two units in the seeded catalogue rather than one, so the
+   * column is visibly doing something on the demo screens.
+   */
+  readonly unit: MeasurementUnit;
 }
 
 const FAMILIES: readonly [Family, ...Family[]] = [
@@ -60,60 +69,70 @@ const FAMILIES: readonly [Family, ...Family[]] = [
     label: "Contact",
     variants: ["femelle 0.64", "male 0.64", "femelle 1.5", "male 1.5", "femelle 2.8", "male 2.8"],
     packSizes: [500, 1_000, 2_000, 5_000],
+    unit: "PIECE",
   },
   {
     code: "JPT",
     label: "Joint passe-fil",
     variants: ["silicone bleu", "silicone vert", "silicone gris", "silicone orange"],
     packSizes: [500, 1_000, 2_000],
+    unit: "PIECE",
   },
   {
     code: "BTR",
     label: "Boitier connecteur",
     variants: ["2 voies", "4 voies", "6 voies", "8 voies", "12 voies", "16 voies", "24 voies"],
     packSizes: [50, 100, 250, 500],
+    unit: "PIECE",
   },
   {
     code: "CBL",
     label: "Cable FLRY-B",
     variants: ["0.35 mm2", "0.50 mm2", "0.75 mm2", "1.00 mm2", "1.50 mm2", "2.50 mm2"],
     packSizes: [100, 200, 500],
+    unit: "METRE",
   },
   {
     code: "RBN",
     label: "Ruban adhesif",
     variants: ["PET noir 19mm", "PVC noir 19mm", "tissu 25mm", "mousse 19mm"],
     packSizes: [24, 48, 96],
+    unit: "PIECE",
   },
   {
     code: "GNE",
     label: "Gaine annelee",
     variants: ["NW7.5", "NW10", "NW13", "NW17", "NW22"],
     packSizes: [25, 50, 100],
+    unit: "METRE",
   },
   {
     code: "FUS",
     label: "Fusible",
     variants: ["5A", "7.5A", "10A", "15A", "20A", "25A", "30A"],
     packSizes: [100, 250, 500],
+    unit: "PIECE",
   },
   {
     code: "RLY",
     label: "Relais",
     variants: ["12V 20A", "12V 30A", "12V 40A", "bistable 12V"],
     packSizes: [20, 50, 100],
+    unit: "PIECE",
   },
   {
     code: "TBL",
     label: "Tube thermoretractable",
     variants: ["2:1 3mm", "2:1 6mm", "3:1 9mm", "3:1 12mm"],
     packSizes: [50, 100, 200],
+    unit: "METRE",
   },
   {
     code: "CLP",
     label: "Clip de fixation",
     variants: ["sapin 6mm", "sapin 8mm", "rotatif", "double aile"],
     packSizes: [200, 500, 1_000],
+    unit: "PIECE",
   },
 ];
 
@@ -165,6 +184,7 @@ export function buildCatalogue(count = 150): SeedArticle[] {
     articles.push({
       reference,
       designation: `${family.label} ${variant}`,
+      unit: family.unit,
       vpe: pick(random, family.packSizes),
       // Class A parts are ordered often and LTN4 keeps them staged, so they
       // move faster than the long tail.

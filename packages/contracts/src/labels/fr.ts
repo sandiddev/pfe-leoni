@@ -1,6 +1,7 @@
 import type {
   AbcClass,
   AlertLevel,
+  MeasurementUnit,
   NotificationType,
   Permission,
   RequestStatus,
@@ -110,6 +111,30 @@ export const NOTIFICATION_TYPE_LABELS_FR: Readonly<Record<NotificationType, stri
   REQUEST_RECEIVED: "Demande receptionnee",
   REQUEST_LATE: "Demande en retard",
   LTN4_STOCK_OUT: "Rupture signalee par LTN4",
+};
+
+/**
+ * How an article is counted, and how it is abbreviated beside a figure.
+ *
+ * Two maps rather than one. A table cell has room for `1 200 pcs` and not for
+ * `1 200 pièce(s)`; a form label has room for the word and needs it, because
+ * `pcs` in a dropdown is jargon. The abbreviations are the SI ones where SI has
+ * an opinion, so `m` and `kg` are lowercase and unpluralised — writing `kgs`
+ * beside a quantity is the kind of detail a logistics reader notices.
+ */
+export const MEASUREMENT_UNIT_LABELS_FR: Readonly<Record<MeasurementUnit, string>> = {
+  PIECE: "Piece",
+  METRE: "Metre",
+  KILOGRAM: "Kilogramme",
+  LITRE: "Litre",
+};
+
+/** The short form shown next to a quantity in a table or an export. */
+export const MEASUREMENT_UNIT_SYMBOLS_FR: Readonly<Record<MeasurementUnit, string>> = {
+  PIECE: "pcs",
+  METRE: "m",
+  KILOGRAM: "kg",
+  LITRE: "L",
 };
 
 /** Which end of a transfer a plant sits on. */

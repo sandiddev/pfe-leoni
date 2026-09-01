@@ -4,8 +4,12 @@ import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { ABC_CLASS_LABELS_FR, type ArticleListItem } from "@leoni/contracts";
-import { ABC_CLASSES, type AbcClass } from "@leoni/core";
+import {
+  ABC_CLASS_LABELS_FR,
+  type ArticleListItem,
+  MEASUREMENT_UNIT_LABELS_FR,
+} from "@leoni/contracts";
+import { ABC_CLASSES, type AbcClass, MEASUREMENT_UNITS, type MeasurementUnit } from "@leoni/core";
 import { Button, Dialog, Field, Input, Select, Switch, useToast } from "@leoni/ui";
 import { useTRPC } from "~/trpc/client";
 
@@ -37,6 +41,7 @@ export function ArticleFormDialog({ open, onClose, article, onSaved }: ArticleFo
 
   const [reference, setReference] = useState(article?.reference ?? "");
   const [designation, setDesignation] = useState(article?.designation ?? "");
+  const [unit, setUnit] = useState<MeasurementUnit>(article?.unit ?? "PIECE");
   const [vpe, setVpe] = useState(String(article?.vpe ?? 100));
   const [leadTimeDays, setLeadTimeDays] = useState(String(article?.leadTimeDays ?? 2));
   const [abcClass, setAbcClass] = useState<AbcClass>(article?.abcClass ?? "C");
@@ -96,6 +101,7 @@ export function ArticleFormDialog({ open, onClose, article, onSaved }: ArticleFo
       update.mutate({
         articleId: article.articleId,
         designation,
+        unit,
         vpe: parsedVpe,
         leadTimeDays: parsedLeadTime,
         abcClass,
@@ -107,6 +113,7 @@ export function ArticleFormDialog({ open, onClose, article, onSaved }: ArticleFo
     create.mutate({
       reference,
       designation,
+      unit,
       vpe: parsedVpe,
       leadTimeDays: parsedLeadTime,
       abcClass,
@@ -169,6 +176,31 @@ export function ArticleFormDialog({ open, onClose, article, onSaved }: ArticleFo
         </Field>
 
         <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Unite"
+            required
+            description="Ce que compte une quantite. Les quantites restent des nombres entiers."
+          >
+            {(props) => (
+              <Select
+                {...props}
+                value={unit}
+                onChange={(event) => {
+                  const next = MEASUREMENT_UNITS.find(
+                    (candidate) => candidate === event.target.value,
+                  );
+                  setUnit(next ?? "PIECE");
+                }}
+              >
+                {MEASUREMENT_UNITS.map((candidate) => (
+                  <option key={candidate} value={candidate}>
+                    {MEASUREMENT_UNIT_LABELS_FR[candidate]}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+
           <Field
             label="VPE"
             required

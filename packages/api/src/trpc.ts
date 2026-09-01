@@ -16,6 +16,7 @@ import {
 } from "@leoni/core";
 
 import type { Context } from "./context";
+import { logFailure } from "./shared/log";
 
 /**
  * tRPC initialisation and the procedure builders every module uses.
@@ -92,11 +93,33 @@ function toTRPCError(error: unknown): TRPCError {
   return new TRPCError({ code: "INTERNAL_SERVER_ERROR", cause: error });
 }
 
-const domainErrorMiddleware = t.middleware(async ({ next }) => {
+/**
+ * Translates domain errors, and records that the call failed.
+ *
+ * Both here because this is the one place every call already passes through on
+ * its way to failing. Two middlewares would mean two places that have to agree
+ * about what counts as an error, and the logging one would be the one somebody
+ * forgets to add to a new procedure builder.
+ */
+const domainErrorMiddleware = t.middleware(async ({ ctx, path, next }) => {
+  const startedAt = Date.now();
+
   try {
     return await next();
   } catch (error) {
-    throw toTRPCError(error);
+    const translated = toTRPCError(error);
+
+    logFailure({
+      requestId: ctx.requestId,
+      actorId: ctx.actor?.userId ?? null,
+      path,
+      durationMs: Date.now() - startedAt,
+      code: translated.code,
+      domainCode: isDomainError(translated.cause) ? translated.cause.code : null,
+      message: translated.message,
+    });
+
+    throw translated;
   }
 });
 

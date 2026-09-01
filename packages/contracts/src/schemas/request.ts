@@ -122,11 +122,7 @@ export type DeleteDraftInput = z.infer<typeof deleteDraftInputSchema>;
  * and everything else arriving on a factory server is a question nobody wants
  * to answer. Enforced on the upload route, which is the only writer.
  */
-export const ALLOWED_ATTACHMENT_TYPES = [
-  "application/pdf",
-  "image/png",
-  "image/jpeg",
-] as const;
+export const ALLOWED_ATTACHMENT_TYPES = ["application/pdf", "image/png", "image/jpeg"] as const;
 
 /** Ten megabytes: a phone photograph of a damaged pallet, not a video. */
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;

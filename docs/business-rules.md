@@ -208,6 +208,30 @@ service cannot open the transaction itself (it may not import `@leoni/db`), so a
 method that changes state takes the history row as part of its input. `updateWithAudit` in
 `article.repository.ts` is the reference implementation.
 
+### Each stage records its own quantity, and re-reads its own column first
+
+**Where** `QUANTITY_PLANS` in `packages/core/src/workflow/transitions.ts` · **Proof**
+`transitions.test.ts`, "re-reads its own column wherever more than one action writes it"
+
+Requested, approved, prepared, shipped, received are five different facts, and the gaps
+between them are what every service-level KPI is computed from. A stage that says nothing
+carries the previous stage's figure forward, which is the common case — LTN4 usually prepares
+what was approved.
+
+The table lives in the domain because it is read twice: by the service to decide which column
+a transition writes, and by the UI to decide whether to ask for quantities at all. The client
+names the **action**, never the column — a payload that chose the column could write
+"received" while approving.
+
+A column that several actions write must be read back before falling back to an earlier stage.
+The preparation loop is exactly that case, since `PARTIALLY_AVAILABLE` and `LTN4_STOCK_OUT`
+both lead back into `IN_PREPARATION`. This is not hypothetical: `markReady` carried forward
+from `approvedQuantity`, so declaring a partial and then marking the pallet ready restored the
+full approved quantity and erased both the shortfall and the reason LTN4 had given for it.
+
+`requestedQuantity` is never written by a transition. It is the demand the whole trail is
+measured against — the gap between requested and received _is_ the service level.
+
 ### A justification is mandatory where the process owes an explanation
 
 `reject`, `cancel`, `declarePartial`, `declareStockOut`.
@@ -258,6 +282,49 @@ becomes unexplainable and the consumption average uncomputable.
 Physical parts come in whole units. `Decimal` never reaches the browser — the mapper converts
 it, in one named place, because a threshold that arrives in the UI as
 `{ s: 1, e: 3, d: [1500] }` renders as nothing anyone can read.
+
+It never reaches a **service** either. A repository hands the service layer plain `number`s,
+so a business rule cannot depend on a Prisma runtime class. This is not cosmetic: while
+services unwrapped `Decimal` themselves, every service test had to `import { Prisma }` and
+build `new Prisma.Decimal(...)` fixtures — the opposite of the "plain object stub and no
+Postgres" seam CLAUDE.md section 3 describes.
+
+### A transfer conserves units across the two plants
+
+**Where** `planDispatch` and `planReceipt` in `request.service.ts` · **ADR**
+`docs/adr/0006-transfer-legs-at-dispatch-and-receipt.md` · **Proof** `smoke.ts`,
+"a full cycle conserves the total units across both plants"
+
+A réapprovisionnement is a transfer (domain §1), so it has two legs. `ship` debits the
+supplying plant with a `TRANSFER_OUT`, drawn FIFO; `confirmReceipt` credits the consuming
+plant with a `TRANSFER_IN`. Between them the goods are on neither plant's books, which is
+physically true while a lorry is moving.
+
+Neither leg is an `ENTRY` or an `EXIT`, and that matters beyond naming: `isConsumption`
+excludes transfers, so an inter-plant move never inflates either plant's demand average and
+therefore never inflates the thresholds derived from it.
+
+Crediting one plant without debiting the other created units out of nothing on every request,
+and left LTN4's alert board computed from a level that never fell.
+
+### A read-compute-write is guarded on the value it read
+
+**Where** `guarded` in `shared/conflict.ts`, `applyTransition`,
+`recordMovementWithStockUpdate` · **Proof** `smoke.ts`, "CONCURRENCY GUARDS"
+
+Every stock write reads a level, asks the domain what the new one should be, and writes it
+back. That is only correct while the row has not moved, so the previously-read value travels
+in the `where` clause and Prisma raises `P2025` when it no longer matches — surfaced as
+`ConflictError`, which the UI shows as "reload and try again".
+
+Not `increment`/`decrement`: `alertLevel` is written in the same statement and is a domain
+decision about the _resulting_ level, so a blind atomic delta cannot compute it. The same
+guard carries the status on a transition, which is what stops two clicks on Expédier applying
+twice.
+
+`ConflictError` is deliberately distinct from `TransitionNotAllowedError`. Both are HTTP 409
+and they mean different things to the person reading the toast: "somebody got there first" is
+not "you may not do that".
 
 ---
 

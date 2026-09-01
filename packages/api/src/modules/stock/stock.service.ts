@@ -107,7 +107,7 @@ async function loadTarget(
   const warningMarginRatio =
     parameterRow === null
       ? defaultParametersForClass(stockItem.article.abcClass).warningMarginRatio
-      : parameterRow.warningMarginRatio.toNumber();
+      : parameterRow.warningMarginRatio;
 
   return { stockItem, warningMarginRatio };
 }
@@ -144,6 +144,9 @@ interface LotPlanInputs {
   readonly lots: readonly { id: string; quantity: number; fifoDate: Date }[];
   readonly destinationId: string | null;
   readonly occurredAt: Date;
+  /** Carried onto a created lot; meaningless on a draw, which picks existing ones. */
+  readonly batchReference: string | null;
+  readonly supplierReference: string | null;
 }
 
 /**
@@ -161,7 +164,14 @@ function planLots(inputs: LotPlanInputs): readonly LotWrite[] {
       throw new InvalidInputError("Un emplacement est requis pour une entree en stock.", {});
     }
     return [
-      { kind: "create", storageLocationId: destinationId, quantity, fifoDate: occurredAt },
+      {
+        kind: "create",
+        storageLocationId: destinationId,
+        quantity,
+        fifoDate: occurredAt,
+        batchReference: inputs.batchReference,
+        supplierReference: inputs.supplierReference,
+      },
     ];
   }
 
@@ -187,6 +197,29 @@ interface WriteMovementInputs {
     readonly occurredAt: Date | undefined;
     readonly reference: string | null;
     readonly note: string | null;
+    readonly batchReference: string | null;
+    readonly supplierReference: string | null;
+  };
+}
+
+/**
+ * An inventory count expressed as the movement it is equivalent to.
+ *
+ * An adjustment upwards needs a shelf for the surplus; downwards it draws FIFO
+ * like any other exit. Expressing both as the equivalent movement means one
+ * lot-planning path rather than a second one for corrections — the journal
+ * still records `ADJUSTMENT`, because what happened was a recount.
+ */
+function asEquivalentMovement(
+  type: MovementType,
+  previousStock: number,
+  newStock: number,
+): { readonly delta: number; readonly effectiveType: MovementType } {
+  const delta = newStock - previousStock;
+
+  return {
+    delta,
+    effectiveType: type === "ADJUSTMENT" ? (delta >= 0 ? "ENTRY" : "EXIT") : type,
   };
 }
 
@@ -198,7 +231,11 @@ interface WriteMovementInputs {
  * instead of putting it in front of a human.
  */
 function assertStockSufficient(
-  movement: { readonly currentStock: number; readonly type: MovementType; readonly quantity: number },
+  movement: {
+    readonly currentStock: number;
+    readonly type: MovementType;
+    readonly quantity: number;
+  },
   article: { readonly articleId: string; readonly reference: string },
 ): void {
   if (!wouldGoNegative(movement)) return;
@@ -231,8 +268,12 @@ async function planMovementShortages(inputs: {
   readonly stockItem: {
     readonly siteId: string;
     readonly alertLevel: AlertLevel;
-    readonly minThreshold: { toNumber: () => number };
-    readonly article: { readonly id: string; readonly reference: string; readonly designation: string };
+    readonly minThreshold: number;
+    readonly article: {
+      readonly id: string;
+      readonly reference: string;
+      readonly designation: string;
+    };
   };
   readonly newStock: number;
   readonly alertLevel: AlertLevel;
@@ -249,7 +290,7 @@ async function planMovementShortages(inputs: {
       reference: stockItem.article.reference,
       designation: stockItem.article.designation,
       newStock,
-      minThreshold: stockItem.minThreshold.toNumber(),
+      minThreshold: stockItem.minThreshold,
     },
     recipients: await repository.findSiteRecipients(stockItem.siteId),
   });
@@ -284,12 +325,7 @@ async function writeMovement(inputs: WriteMovementInputs): Promise<RecordMovemen
   const newStock = applyMovement(movement);
   const occurredAt = details.occurredAt ?? new Date();
 
-  // An adjustment upwards needs a shelf for the surplus; downwards it draws
-  // FIFO like any other exit. Both are expressed as the equivalent movement, so
-  // there is one lot-planning path rather than a second one for corrections.
-  const delta = newStock - previousStock;
-  const effectiveType: MovementType =
-    type === "ADJUSTMENT" ? (delta >= 0 ? "ENTRY" : "EXIT") : type;
+  const { delta, effectiveType } = asEquivalentMovement(type, previousStock, newStock);
 
   // Only an inbound movement needs a destination; an outbound one is told where
   // to draw from by FIFO. Asking for a shelf on an exit was a bug the tests
@@ -304,11 +340,13 @@ async function writeMovement(inputs: WriteMovementInputs): Promise<RecordMovemen
     lots: stockItem.lots,
     destinationId,
     occurredAt,
+    batchReference: details.batchReference,
+    supplierReference: details.supplierReference,
   });
 
   const alertLevel: AlertLevel = resolveAlertLevel({
     currentStock: newStock,
-    min: stockItem.minThreshold.toNumber(),
+    min: stockItem.minThreshold,
     warningMarginRatio,
   });
 
@@ -359,6 +397,8 @@ export async function record({
       occurredAt: input.occurredAt,
       reference: input.reference ?? null,
       note: null,
+      batchReference: input.batchReference ?? null,
+      supplierReference: input.supplierReference ?? null,
     },
   });
 }
@@ -387,6 +427,10 @@ export async function adjust({
       occurredAt: undefined,
       reference: null,
       note: input.reason,
+      // An inventory correction is a recount of what is already there, not an
+      // arrival: there is no delivery and therefore no batch to record.
+      batchReference: null,
+      supplierReference: null,
     },
   });
 }

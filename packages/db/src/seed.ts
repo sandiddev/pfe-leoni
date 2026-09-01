@@ -46,6 +46,35 @@ function daysFromNow(days: number): Date {
   return new Date(NOW.getTime() + days * MILLISECONDS_PER_DAY);
 }
 
+/** Suppliers a wiring-harness plant actually buys from. */
+const SUPPLIERS = ["TE Connectivity", "Aptiv", "Yazaki", "Molex", "HellermannTyton"] as const;
+
+/**
+ * A plausible batch for a seeded lot.
+ *
+ * Derived from the reference rather than random, so the demo shows the same
+ * batch numbers on every machine — a screenshot in the report and the screen at
+ * the defence have to agree. Every seeded lot gets one: an application that
+ * only ever shows a dash for traceability demonstrates nothing.
+ */
+function batchFor(
+  reference: string,
+  lotIndex: number,
+): { batchReference: string; supplierReference: string } {
+  // `Array.from` rather than a spread: references are ASCII today, and the
+  // lint rule is right that a spread over a string splits surrogate pairs.
+  const fingerprint = Array.from(reference).reduce(
+    (sum, character) => sum + character.charCodeAt(0),
+    0,
+  );
+  const supplier = SUPPLIERS[(fingerprint + lotIndex) % SUPPLIERS.length] ?? SUPPLIERS[0];
+
+  return {
+    batchReference: `LOT-2026-${String(((fingerprint + lotIndex * 37) % 900) + 100)}`,
+    supplierReference: supplier,
+  };
+}
+
 /** Deterministic PRNG, so the seed is reproducible across machines. */
 function createRandom(seed: number): () => number {
   let state = seed >>> 0;
@@ -295,6 +324,7 @@ async function main(): Promise<void> {
       data: {
         reference: seedArticle.reference,
         designation: seedArticle.designation,
+        unit: seedArticle.unit,
         vpe: seedArticle.vpe,
         leadTimeDays: seedArticle.leadTimeDays,
         abcClass: seedArticle.abcClass,
@@ -377,6 +407,7 @@ async function main(): Promise<void> {
             storageLocationId: location.id,
             quantity,
             fifoDate: daysAgo(60 - lotIndex * 15),
+            ...batchFor(seedArticle.reference, lotIndex),
           },
         });
       }
@@ -425,6 +456,7 @@ async function main(): Promise<void> {
             storageLocationId: location.id,
             quantity: lot.quantity,
             fifoDate: daysAgo(lot.ageInDays),
+            ...batchFor(seedArticle.reference, lotIndex),
           },
         });
       }

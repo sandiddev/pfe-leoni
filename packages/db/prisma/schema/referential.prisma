@@ -53,6 +53,10 @@ model Article {
   reference   String @unique
   designation String
 
+  /// What one unit of this article is. A label: quantities remain whole
+  /// numbers, and this says what they count (brief section 6.2 vocabulary).
+  unit         MeasurementUnit @default(PIECE)
+
   /// VPE / EUP: units per box. Every ordered quantity is a multiple of this.
   vpe          Int
   /// Days LTN4 needs to prepare and deliver (brief section 2).

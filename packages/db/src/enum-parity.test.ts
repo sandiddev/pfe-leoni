@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ABC_CLASSES,
   ALERT_LEVELS,
+  MEASUREMENT_UNITS,
   MOVEMENT_TYPES,
   NOTIFICATION_TYPES,
   RECALCULATION_TRIGGERS,
@@ -41,6 +42,7 @@ import * as prismaEnums from "./generated/prisma/enums";
 const ENUM_PAIRS = [
   { name: "AbcClass", domain: ABC_CLASSES, prisma: prismaEnums.AbcClass },
   { name: "AlertLevel", domain: ALERT_LEVELS, prisma: prismaEnums.AlertLevel },
+  { name: "MeasurementUnit", domain: MEASUREMENT_UNITS, prisma: prismaEnums.MeasurementUnit },
   { name: "MovementType", domain: MOVEMENT_TYPES, prisma: prismaEnums.MovementType },
   { name: "NotificationType", domain: NOTIFICATION_TYPES, prisma: prismaEnums.NotificationType },
   {

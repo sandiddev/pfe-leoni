@@ -156,7 +156,6 @@ export function ParameterPanel({
               </TableBody>
             </Table>
           </TableContainer>
-
         </CardContent>
       </Card>
 
