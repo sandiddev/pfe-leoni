@@ -12,7 +12,8 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "clean": "rm -rf .turbo node_modules *.tsbuildinfo",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "smoke": "tsx src/smoke.ts"
   },
   "dependencies": {
     "@leoni/auth": "workspace:*",
@@ -31,6 +32,7 @@
     "@vitest/coverage-v8": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "tsx": "catalog:"
   }
 }

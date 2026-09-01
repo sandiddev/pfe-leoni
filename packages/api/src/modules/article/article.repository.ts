@@ -37,6 +37,17 @@ const listSelection = {
       vpe: true,
       leadTimeDays: true,
       isActive: true,
+      // The article's own parameters, if somebody overrode them. Selected with
+      // the row rather than fetched per article: this list is up to a hundred
+      // rows and a lookup each would be a hundred round trips.
+      parameter: {
+        select: {
+          safetyDays: true,
+          extraCoverageDays: true,
+          averagingWindowDays: true,
+          warningMarginRatio: true,
+        },
+      },
     },
   },
 } satisfies Prisma.StockItemSelect;
@@ -253,6 +264,74 @@ export async function updateWithAudit(options: UpdateArticleOptions): Promise<vo
   ]);
 }
 
+export interface CreateArticleData {
+  readonly reference: string;
+  readonly designation: string;
+  readonly vpe: number;
+  readonly leadTimeDays: number;
+  readonly abcClass: AbcClass;
+}
+
+export interface CreateArticleOptions {
+  readonly articleId: string;
+  readonly data: CreateArticleData;
+  /** One stock row per plant, decided by the service. */
+  readonly stockItems: readonly { readonly siteId: string; readonly currentStock: number }[];
+  readonly audit: AuditEntry;
+}
+
+/**
+ * Creates an article, its stock row at every plant, and the audit entry.
+ *
+ * The stock rows are not optional and not a follow-up call. Every screen in
+ * this application reads `StockItem`, not `Article`: the alert board, the
+ * catalogue, the request line editor. An article created without them exists
+ * in the database and nowhere in the interface, which is a worse outcome than
+ * a failed creation because nothing reports it.
+ *
+ * `currentStock` is written directly rather than through a movement, because
+ * an opening balance is not a movement — nothing arrived. The journal starts
+ * empty and honest, and the first real entry is the first real event.
+ */
+export async function createWithAudit(options: CreateArticleOptions): Promise<void> {
+  const { articleId, data, stockItems, audit } = options;
+
+  await db.$transaction([
+    db.article.create({
+      data: {
+        id: articleId,
+        ...data,
+        stockItems: {
+          create: stockItems.map((item) => ({
+            siteId: item.siteId,
+            currentStock: item.currentStock,
+          })),
+        },
+      },
+    }),
+    db.auditLog.create({
+      data: {
+        entity: audit.entity,
+        entityId: audit.entityId,
+        action: audit.action,
+        before: audit.before ?? Prisma.DbNull,
+        after: audit.after ?? Prisma.DbNull,
+        actorId: audit.actorId,
+      },
+    }),
+  ]);
+}
+
+/** Guards the unique reference before Postgres does, so the message is French. */
+export async function findByReference(reference: string) {
+  return db.article.findUnique({ where: { reference }, select: { id: true } });
+}
+
+/** Every plant an article must have a stock row at. */
+export async function findAllSites() {
+  return db.site.findMany({ select: { id: true }, orderBy: { code: "asc" } });
+}
+
 /**
  * The master-data fields an update compares against and audits.
  *
@@ -289,6 +368,9 @@ export async function findRawArticle(articleId: string) {
  */
 export const articleRepository = {
   findMany,
+  findAllSites,
+  findByReference,
+  createWithAudit,
   findByArticleAndSite,
   findLots,
   findRecentMovements,

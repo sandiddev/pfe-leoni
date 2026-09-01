@@ -539,6 +539,11 @@ async function main(): Promise<void> {
     { status: "IN_PREPARATION", daysAgo: 6 },
     { status: "SHIPPED", daysAgo: 11 },
     { status: "RECEIVED", daysAgo: 18 },
+    // Two more drafts so the draft editor has something to open on a fresh
+    // database: a screen that only exists when the demonstrator remembers to
+    // create a request first is a screen that gets skipped.
+    { status: "DRAFT", daysAgo: 1 },
+    { status: "DRAFT", daysAgo: 3 },
   ];
 
   const REACHED_BY: Readonly<Record<RequestStatus, readonly RequestStatus[]>> = {

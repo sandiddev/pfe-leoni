@@ -8,6 +8,7 @@ import {
   idSchema,
   paginationSchema,
   positiveQuantitySchema,
+  quantitySchema,
   searchSchema,
   sortDirectionSchema,
 } from "./common";
@@ -54,6 +55,35 @@ export const articleByIdInputSchema = z.object({
 });
 
 export type ArticleByIdInput = z.infer<typeof articleByIdInputSchema>;
+
+/**
+ * Creating an article. Administrator only.
+ *
+ * The reference is the identity a storekeeper reads off a bin label, so it is
+ * validated harder than the rest: trimmed, upper-cased and unique. Everything
+ * else about the article can be corrected later; a duplicated reference is two
+ * bins nobody can tell apart.
+ */
+export const createArticleInputSchema = z.object({
+  reference: z
+    .string()
+    .trim()
+    .min(2, "Reference requise")
+    .max(64, "Reference trop longue")
+    .transform((value) => value.toUpperCase()),
+  designation: z.string().trim().min(2, "Designation requise").max(200),
+  vpe: positiveQuantitySchema,
+  leadTimeDays: z
+    .number()
+    .int()
+    .min(0, "Le delai ne peut pas etre negatif")
+    .max(365, "Delai irrealiste"),
+  abcClass: abcClassSchema,
+  /** Opening quantity per plant, if the shelves are not empty. */
+  initialStock: quantitySchema.default(0),
+});
+
+export type CreateArticleInput = z.infer<typeof createArticleInputSchema>;
 
 /** Master-data edit. Administrator only (brief section 4). */
 export const updateArticleInputSchema = z.object({

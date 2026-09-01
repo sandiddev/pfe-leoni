@@ -42,6 +42,16 @@ export const env = createEnv({
 
     /** Password given to the demo accounts created by the seed. */
     SEED_USER_PASSWORD: z.string().min(8).default("Leoni2026!"),
+
+    /**
+     * Where request attachments land on the host disk.
+     *
+     * No external object storage (brief section 6.2): the application runs on
+     * the LEONI internal network and its files stay there. A relative default
+     * keeps a fresh checkout working; a deployment points this at a volume that
+     * survives a redeploy.
+     */
+    UPLOAD_DIR: z.string().min(1).default("./uploads"),
   },
 
   client: {
@@ -61,6 +71,7 @@ export const env = createEnv({
     BETTER_AUTH_URL: process.env["BETTER_AUTH_URL"],
     JOB_SECRET: process.env["JOB_SECRET"],
     SEED_USER_PASSWORD: process.env["SEED_USER_PASSWORD"],
+    UPLOAD_DIR: process.env["UPLOAD_DIR"],
     NEXT_PUBLIC_APP_URL: process.env["NEXT_PUBLIC_APP_URL"],
   },
 

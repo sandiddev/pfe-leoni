@@ -2,17 +2,21 @@
 
 import { Search } from "lucide-react";
 
-import { ALERT_LEVEL_LABELS_FR } from "@leoni/contracts";
-import type { AlertLevel } from "@leoni/core";
-import { Button, Input } from "@leoni/ui";
+import { ABC_CLASS_LABELS_FR, ALERT_LEVEL_LABELS_FR } from "@leoni/contracts";
+import { ABC_CLASSES, type AbcClass, type AlertLevel } from "@leoni/core";
+import { Button, Input, Select, Switch } from "@leoni/ui";
 
 export interface ArticleFiltersProps {
   readonly search: string;
   readonly onSearchChange: (value: string) => void;
   readonly alertLevel: AlertLevel | "ALL";
   readonly onAlertLevelChange: (value: AlertLevel | "ALL") => void;
+  readonly abcClass: AbcClass | "ALL";
+  readonly onAbcClassChange: (value: AbcClass | "ALL") => void;
   readonly onlyReplenishable: boolean;
   readonly onOnlyReplenishableChange: (value: boolean) => void;
+  readonly includeInactive: boolean;
+  readonly onIncludeInactiveChange: (value: boolean) => void;
 }
 
 const ALERT_FILTERS: readonly (AlertLevel | "ALL")[] = [
@@ -29,8 +33,12 @@ export function ArticleFilters({
   onSearchChange,
   alertLevel,
   onAlertLevelChange,
+  abcClass,
+  onAbcClassChange,
   onlyReplenishable,
   onOnlyReplenishableChange,
+  includeInactive,
+  onIncludeInactiveChange,
 }: ArticleFiltersProps) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -46,6 +54,23 @@ export function ArticleFilters({
           }}
         />
       </div>
+
+      <Select
+        className="w-44"
+        aria-label="Filtrer par classe ABC"
+        value={abcClass}
+        onChange={(event) => {
+          const next = ABC_CLASSES.find((candidate) => candidate === event.target.value);
+          onAbcClassChange(next ?? "ALL");
+        }}
+      >
+        <option value="ALL">Toutes les classes</option>
+        {ABC_CLASSES.map((candidate) => (
+          <option key={candidate} value={candidate}>
+            {ABC_CLASS_LABELS_FR[candidate]}
+          </option>
+        ))}
+      </Select>
 
       <div
         className="flex items-center gap-1"
@@ -77,6 +102,15 @@ export function ArticleFilters({
       >
         A reapprovisionner
       </Button>
+
+      <label className="flex items-center gap-2 text-sm text-foreground-muted">
+        <Switch
+          checked={includeInactive}
+          onCheckedChange={onIncludeInactiveChange}
+          aria-label="Afficher les articles archives"
+        />
+        Archives
+      </label>
     </div>
   );
 }

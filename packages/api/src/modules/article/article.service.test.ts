@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_CLASS_PARAMETERS, NotFoundError } from "@leoni/core";
+import { BusinessRuleError, DEFAULT_CLASS_PARAMETERS, NotFoundError } from "@leoni/core";
 import { Prisma } from "@leoni/db";
 
 import type { Actor } from "../../context";
-import type { ArticleRepository, StockItemRow } from "./article.repository";
+import type { ArticleRepository, CreateArticleOptions, StockItemRow } from "./article.repository";
 import * as service from "./article.service";
 
 /**
@@ -40,6 +40,7 @@ interface RowOptions {
   readonly currentStock?: number;
   readonly averageDailyConsumption?: number;
   readonly abcClass?: "A" | "B" | "C";
+  readonly override?: ReturnType<typeof override> | null;
 }
 
 /** One row shaped exactly as `listSelection` returns it. */
@@ -71,7 +72,18 @@ function row(options: RowOptions = {}): StockItemRow {
       vpe: 100,
       leadTimeDays: 2,
       isActive: true,
+      parameter: options.override ?? null,
     },
+  };
+}
+
+/** A written article-level override, in the shape Prisma returns it. */
+function override(safetyDays: number, extraCoverageDays: number) {
+  return {
+    safetyDays: new Prisma.Decimal(safetyDays),
+    extraCoverageDays: new Prisma.Decimal(extraCoverageDays),
+    averagingWindowDays: 30,
+    warningMarginRatio: new Prisma.Decimal(0.2),
   };
 }
 
@@ -89,6 +101,9 @@ function stubRepository(overrides: Partial<ArticleRepository> = {}): ArticleRepo
 
   return {
     findMany: notStubbed("findMany"),
+    findAllSites: async () => [{ id: "site-ltn1" }, { id: "site-ltn4" }],
+    findByReference: async () => null,
+    createWithAudit: notStubbed("createWithAudit"),
     findByArticleAndSite: notStubbed("findByArticleAndSite"),
     findLots: notStubbed("findLots"),
     findRecentMovements: notStubbed("findRecentMovements"),
@@ -534,5 +549,128 @@ describe("article service — update", () => {
     });
 
     expect(result.thresholdsNeedRecalculation).toBe(false);
+  });
+});
+
+
+describe("article parameters", () => {
+  it("prefers an article's own parameters over its class default", async () => {
+    const page = await service.list({
+      actor: actor(),
+      input: listInput,
+      repository: stubRepository({
+        findMany: async () => ({
+          rows: [row({ currentStock: 300, override: override(4, 0) })],
+          totalCount: 1,
+        }),
+      }),
+    });
+
+    // 100/day, lead 2, override safety 4 -> min 600, extra 0 -> max 600.
+    expect(page.items[0]?.recommendedQuantity).toBe(300);
+  });
+
+  it("falls back to the class default when no override is written", async () => {
+    const page = await service.list({
+      actor: actor(),
+      input: listInput,
+      repository: stubRepository({
+        findMany: async () => ({ rows: [row({ currentStock: 300 })], totalCount: 1 }),
+      }),
+    });
+
+    // Class A defaults: 2 safety days, 3 extra -> min 400, max 700.
+    expect(page.items[0]?.recommendedQuantity).toBe(400);
+  });
+});
+
+describe("article creation", () => {
+  function captureCreate() {
+    const calls: CreateArticleOptions[] = [];
+    return {
+      capture: async (options: CreateArticleOptions) => {
+        calls.push(options);
+      },
+      first: () => {
+        const first = calls[0];
+        if (first === undefined) throw new Error("createWithAudit was never called.");
+        return first;
+      },
+    };
+  }
+
+  const input = {
+    reference: "REF-NEW",
+    designation: "Connecteur 4 voies",
+    vpe: 250,
+    leadTimeDays: 3,
+    abcClass: "B",
+    initialStock: 0,
+  } as const;
+
+  it("creates a stock row at every plant, in the same call as the article", async () => {
+    // Every screen reads StockItem, not Article. An article created without its
+    // stock rows exists in the database and nowhere in the interface.
+    const written = captureCreate();
+
+    await service.create({
+      actor: actor({ role: "ADMIN", siteId: null }),
+      input,
+      repository: stubRepository({ createWithAudit: written.capture }),
+    });
+
+    expect(written.first().stockItems).toEqual([
+      { siteId: "site-ltn1", currentStock: 0 },
+      { siteId: "site-ltn4", currentStock: 0 },
+    ]);
+  });
+
+  it("carries an opening balance onto every plant's stock row", async () => {
+    const written = captureCreate();
+
+    await service.create({
+      actor: actor({ role: "ADMIN", siteId: null }),
+      input: { ...input, initialStock: 400 },
+      repository: stubRepository({ createWithAudit: written.capture }),
+    });
+
+    expect(written.first().stockItems.every((item) => item.currentStock === 400)).toBe(true);
+  });
+
+  it("records the creation in the audit trail with no before-image", async () => {
+    const written = captureCreate();
+
+    await service.create({
+      actor: actor({ role: "ADMIN", siteId: null }),
+      input,
+      repository: stubRepository({ createWithAudit: written.capture }),
+    });
+
+    const audit = written.first().audit;
+    expect(audit.action).toBe("CREATE");
+    expect(audit.before).toBeNull();
+    expect(audit.after).toMatchObject({ reference: "REF-NEW", vpe: 250, abcClass: "B" });
+  });
+
+  it("refuses a reference that already exists, in French", async () => {
+    // Left to the unique index, this would surface as a Postgres constraint
+    // name in a warehouse screen.
+    await expect(
+      service.create({
+        actor: actor({ role: "ADMIN", siteId: null }),
+        input,
+        repository: stubRepository({ findByReference: async () => ({ id: "article-existing" }) }),
+      }),
+    ).rejects.toThrow(/existe deja/i);
+  });
+
+  it("refuses to create an article when no plant is configured", async () => {
+    await expect(
+      service.create({
+        actor: actor({ role: "ADMIN", siteId: null }),
+        input,
+        repository: stubRepository({ findAllSites: async () => [] }),
+      }),
+    ).rejects.toThrow(BusinessRuleError);
   });
 });

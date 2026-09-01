@@ -1,7 +1,17 @@
+"use client";
+
+import { MoreHorizontal, Pencil } from "lucide-react";
+import Link from "next/link";
+
 import type { ArticleListItem } from "@leoni/contracts";
 import {
   AlertLevelBadge,
   Badge,
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
   formatCoverage,
   formatQuantity,
   TableBody,
@@ -12,6 +22,8 @@ import {
 
 export interface ArticleRowsProps {
   readonly items: readonly ArticleListItem[];
+  readonly canWrite: boolean;
+  readonly onEdit: (article: ArticleListItem) => void;
 }
 
 /**
@@ -21,14 +33,26 @@ export interface ArticleRowsProps {
  * tested there, and a second implementation in a component would be a second
  * set of numbers for the same article.
  */
-export function ArticleRows({ items }: ArticleRowsProps) {
+export function ArticleRows({ items, canWrite, onEdit }: ArticleRowsProps) {
   return (
     <TableBody>
       {items.map((item) => (
-        <TableRow key={item.stockItemId}>
-          <TableCell className="font-medium whitespace-nowrap">{item.reference}</TableCell>
+        <TableRow key={item.stockItemId} className={item.isActive ? undefined : "opacity-60"}>
+          <TableCell className="font-medium whitespace-nowrap">
+            <Link
+              href={`/articles/${item.articleId}`}
+              className="text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              {item.reference}
+            </Link>
+          </TableCell>
           <TableCell className="max-w-64 truncate" title={item.designation}>
             {item.designation}
+            {!item.isActive && (
+              <Badge variant="stopped" className="ml-2">
+                Archive
+              </Badge>
+            )}
           </TableCell>
           <TableCell>
             <Badge variant="outline">{item.abcClass}</Badge>
@@ -59,7 +83,7 @@ export function ArticleRows({ items }: ArticleRowsProps) {
             {item.isReplenishmentNeeded ? (
               <span
                 className="font-medium"
-                title={`Besoin ${formatQuantity(item.need)} — ${formatQuantity(item.boxCount)} boite(s) de ${formatQuantity(item.vpe)}`}
+                title={`Besoin ${formatQuantity(item.need)}, soit ${formatQuantity(item.boxCount)} boite(s) de ${formatQuantity(item.vpe)}`}
               >
                 {formatQuantity(item.recommendedQuantity)}
               </span>
@@ -67,6 +91,31 @@ export function ArticleRows({ items }: ArticleRowsProps) {
               <span className="text-foreground-subtle">—</span>
             )}
           </TableNumericCell>
+
+          {canWrite && (
+            <TableCell className="text-right">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" aria-label={`Actions sur ${item.reference}`}>
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      onEdit(item);
+                    }}
+                  >
+                    <Pencil />
+                    Modifier
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link href={`/articles/${item.articleId}`}>Ouvrir la fiche</Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </TableCell>
+          )}
         </TableRow>
       ))}
     </TableBody>

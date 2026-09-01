@@ -1,6 +1,6 @@
 import reactHooks from "eslint-plugin-react-hooks";
 
-import { base, restrictedSyntax } from "./base.js";
+import { base, noArbitraryTailwindValue, restrictedSyntax } from "./base.js";
 
 /**
  * Configuration for `@leoni/ui` — the design system.
@@ -26,6 +26,11 @@ export const react = [
               message:
                 "The design system must not know about the API, the database or authentication. Accept the data as props instead.",
             },
+            {
+              group: ["node:*", "fs", "path", "url", "crypto"],
+              message:
+                "A component renders in a browser, where there is no filesystem. This was previously prevented only by @types/node being absent from the package — an accident, not a decision. It is a decision now.",
+            },
           ],
         },
       ],
@@ -40,10 +45,28 @@ export const react = [
           message:
             "Raw colour literals bypass the design system. Add a semantic token in packages/ui/src/styles/tokens.css and use it (see docs/design-system.md).",
         },
+        noArbitraryTailwindValue,
+      ],
+    },
+  },
+
+  // A test is a Node process, not a component. `theme-parity.test.ts` reads
+  // globals.css off disk, which is the only way to check a stylesheet — Vite's
+  // `?raw` returns an empty string for CSS, because its own CSS pipeline
+  // claims the file first.
+  {
+    files: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
         {
-          selector: "Literal[value=/-\\[/]",
-          message:
-            "Tailwind arbitrary values bypass the design system. Use a semantic token class instead (see docs/design-system.md).",
+          patterns: [
+            {
+              group: ["@leoni/api", "@leoni/api/*", "@leoni/db", "@leoni/db/*", "@leoni/auth", "@leoni/auth/*", "@prisma/client"],
+              message:
+                "The design system must not know about the API, the database or authentication.",
+            },
+          ],
         },
       ],
     },

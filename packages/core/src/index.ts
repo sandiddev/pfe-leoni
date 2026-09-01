@@ -60,6 +60,20 @@ export {
 } from "./access/permissions";
 export { CROSS_SITE_ROLES, type Role, ROLES, isCrossSiteRole, isRole } from "./access/role";
 
+// --- Stock -----------------------------------------------------------------
+export {
+  type FifoAllocation,
+  type FifoLot,
+  allocateFifo,
+  totalAvailable,
+} from "./stock/fifo";
+export {
+  type ApplyMovementInputs,
+  applyMovement,
+  isConsumption,
+  wouldGoNegative,
+} from "./stock/movement";
+
 // --- Replenishment ---------------------------------------------------------
 export {
   ABC_CLASSES,

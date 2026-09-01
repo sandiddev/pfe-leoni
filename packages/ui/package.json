@@ -10,7 +10,8 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf .turbo node_modules *.tsbuildinfo"
+    "clean": "rm -rf .turbo node_modules *.tsbuildinfo",
+    "test": "vitest run"
   },
   "dependencies": {
     "@leoni/contracts": "workspace:*",
@@ -34,6 +35,8 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "tailwindcss": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@types/node": "catalog:"
   }
 }

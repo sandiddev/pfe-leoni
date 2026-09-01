@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   ABC_CLASSES,
   ALERT_LEVELS,
+  NOTIFICATION_TYPES,
   PERMISSIONS,
   REQUEST_STATUSES,
   ROLES,
+  SITE_TYPES,
   TRANSITION_ACTIONS,
   type TransitionAction,
   TRANSITIONS,
@@ -14,10 +16,12 @@ import {
 import {
   ABC_CLASS_LABELS_FR,
   ALERT_LEVEL_LABELS_FR,
+  NOTIFICATION_TYPE_LABELS_FR,
   PERMISSION_LABELS_FR,
   REQUEST_ACTION_LABELS_FR,
   REQUEST_STATUS_LABELS_FR,
   ROLE_LABELS_FR,
+  SITE_TYPE_LABELS_FR,
 } from "./fr";
 
 /**
@@ -55,6 +59,16 @@ describe("French labels cover the whole domain", () => {
     for (const status of REQUEST_STATUSES) {
       expectUsableLabel(REQUEST_STATUS_LABELS_FR[status], status);
     }
+  });
+
+  it("labels every notification type", () => {
+    for (const type of NOTIFICATION_TYPES) {
+      expectUsableLabel(NOTIFICATION_TYPE_LABELS_FR[type], type);
+    }
+  });
+
+  it("labels every site type", () => {
+    for (const type of SITE_TYPES) expectUsableLabel(SITE_TYPE_LABELS_FR[type], type);
   });
 
   it("labels every permission", () => {

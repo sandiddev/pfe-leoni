@@ -102,6 +102,24 @@ export const api = [
     },
   },
 
+  // --- The smoke script: a harness, not a layer ----------------------------
+  //
+  // `src/smoke.ts` drives the real router against a real database, which is how
+  // it catches what the stubbed service tests structurally cannot — the SQL,
+  // the transactions, and the order of statements inside them. It has to reach
+  // for `@leoni/db` to build an actor and to disconnect.
+  //
+  // Exempting it does not weaken the rule it sidesteps. That rule exists so the
+  // business rules stay testable *without* a database; a script whose entire
+  // purpose is to need one is outside its intent, and it defines no layer that
+  // anything else imports.
+  {
+    files: ["src/smoke.ts"],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [noClientImports] }],
+    },
+  },
+
   // --- Repositories: the sanctioned home of Prisma -------------------------
   {
     files: ["src/**/*.repository.ts"],

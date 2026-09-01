@@ -271,6 +271,9 @@ importers:
       eslint:
         specifier: 'catalog:'
         version: 10.9.0(jiti@2.7.0)(supports-color@7.2.0)
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.12
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -500,6 +503,9 @@ importers:
       '@leoni/tsconfig':
         specifier: workspace:*
         version: link:../tooling/tsconfig
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
       '@types/react':
         specifier: 'catalog:'
         version: 19.2.18
@@ -521,6 +527,9 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@24.13.3)(@vitest/coverage-v8@4.1.11)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
 packages:
 

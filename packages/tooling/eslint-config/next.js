@@ -2,7 +2,7 @@ import nextPlugin from "@next/eslint-plugin-next";
 import tanstackQuery from "@tanstack/eslint-plugin-query";
 import reactHooks from "eslint-plugin-react-hooks";
 
-import { base, restrictedSyntax } from "./base.js";
+import { base, noArbitraryTailwindValue, restrictedSyntax } from "./base.js";
 
 /**
  * Configuration for `apps/web`.
@@ -49,6 +49,11 @@ export const next = [
           message:
             "Raw colour literals bypass the design system. Use a semantic token from @leoni/ui.",
         },
+        // CLAUDE.md section 12 has always claimed this config enforces the
+        // arbitrary-value ban. It did not — the rule lived only in react.js, so
+        // every component under apps/web was unchecked, and two arbitrary
+        // values had already slipped in.
+        noArbitraryTailwindValue,
       ],
     },
   },

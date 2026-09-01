@@ -1,6 +1,7 @@
 import {
   articleByIdInputSchema,
   articleListInputSchema,
+  createArticleInputSchema,
   updateArticleInputSchema,
 } from "@leoni/contracts";
 
@@ -28,6 +29,16 @@ export const articleRouter = createTRPCRouter({
   byId: permissionProcedure("article:read")
     .input(articleByIdInputSchema)
     .query(async ({ ctx, input }) => service.byId({ actor: ctx.actor, input })),
+
+  /**
+   * Adds a reference to the catalogue, with its stock row at every plant.
+   *
+   * Same permission as the edit: what an article's Min, Max, VPE and lead time
+   * are is an Administrator's decision, and so is whether it exists.
+   */
+  create: permissionProcedure("article:write")
+    .input(createArticleInputSchema)
+    .mutation(async ({ ctx, input }) => service.create({ actor: ctx.actor, input })),
 
   /**
    * Master data edit.

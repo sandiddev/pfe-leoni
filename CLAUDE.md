@@ -324,6 +324,7 @@ already being violated.
 | Transition roles ⇄ permission matrix        | `packages/core/src/workflow/transitions.test.ts`            | add a role to `allowedRoles` that lacks the permission        |
 | Every action has a French label             | the compiler (`TransitionAction` types the label map)       | add a transition action without wording it                    |
 | Class defaults ⇄ Prisma column defaults     | `packages/db/src/parameter-parity.test.ts`                  | change a `@default` to a value no class uses                  |
+| Light theme ⇄ dark theme, token for token   | `packages/ui/src/styles/theme-parity.test.ts`               | add a `--color-*` to `:root` and not to `[data-theme="dark"]` |
 | Domain coverage ≥ 95%                       | `vitest --coverage`, wired into `pnpm test`                 | add an untested exported function to `@leoni/core`            |
 | Service coverage ≥ 85%                      | `vitest --coverage` in `@leoni/api`                         | add an untested branch to a service                           |
 | **Everything above, per edit**              | `.claude/hooks/eslint-file.sh` via `PostToolUse`            | edit any `.ts` with a violation — it reports in the same turn |
@@ -372,3 +373,4 @@ pnpm db:check
 | [docs/conventions.md](docs/conventions.md)       | The rules above, with the reasoning           |
 | [docs/design-system.md](docs/design-system.md)   | Tokens, when to add a primitive vs a pattern  |
 | [docs/adr/](docs/adr/)                           | One short record per locked decision          |
+| [docs/demo.md](docs/demo.md)                     | The click-path for a live walkthrough         |

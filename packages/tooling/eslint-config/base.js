@@ -80,6 +80,27 @@ export const restrictedSyntaxWithoutEnv = [
 /** The full list. What every package except `@leoni/env` should spread. */
 export const restrictedSyntax = [...restrictedSyntaxWithoutEnv, ...noProcessEnv];
 
+/**
+ * Tailwind arbitrary *values* are banned; arbitrary *variants* are not.
+ *
+ * `bg-[#0056A4]` and `max-h-[85vh]` bypass the design system and are the thing
+ * this rule exists to catch. `data-[state=checked]:bg-primary` is a state
+ * selector, not a value — it is how a Radix component is styled at all, and it
+ * still resolves to a semantic token.
+ *
+ * The first version of this rule matched any `-[`, which caught both. Every
+ * Radix primitive added to the design system tripped it, and a rule that fires
+ * on correct code teaches people to write `eslint-disable`.
+ *
+ * The negative lookahead is the whole distinction: a bracket group followed by
+ * `:` is a variant, anything else is a value.
+ */
+export const noArbitraryTailwindValue = {
+  selector: String.raw`Literal[value=/-\[[^\]]*\](?!:)/]`,
+  message:
+    "Tailwind arbitrary values bypass the design system. Add a semantic token in packages/ui/src/styles/globals.css and use the generated utility (see docs/design-system.md). Arbitrary variants like `data-[state=open]:` are fine.",
+};
+
 export const base = tseslint.config(
   {
     ignores: [
@@ -211,6 +232,9 @@ export const base = tseslint.config(
   // CLI, `next.config.ts` before Next evaluates anything, and `seed.ts` is a
   // plain Node process that has to populate the variables it then validates.
   // Each of these already carries a comment saying so in place.
+  //
+  // `smoke.ts` joins them for the same reason as the seed: it is a standalone
+  // Node script whose entire output is a report a human reads on a terminal.
   {
     files: [
       "**/*.config.ts",
@@ -218,6 +242,7 @@ export const base = tseslint.config(
       "**/*.config.mjs",
       "**/scripts/**",
       "**/src/seed.ts",
+      "**/src/smoke.ts",
     ],
     rules: {
       "import-x/no-default-export": "off",

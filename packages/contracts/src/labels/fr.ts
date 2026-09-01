@@ -1,9 +1,11 @@
 import type {
   AbcClass,
   AlertLevel,
+  NotificationType,
   Permission,
   RequestStatus,
   Role,
+  SiteType,
   TransitionAction,
 } from "@leoni/core";
 
@@ -89,6 +91,31 @@ export const REQUEST_ACTION_LABELS_FR: Readonly<Record<TransitionAction | "creat
   markInTransit: "Marquer en transit",
   confirmReceipt: "Confirmer la reception",
   close: "Cloturer",
+};
+
+/**
+ * What the notification centre calls each event.
+ *
+ * `Record<NotificationType, string>` rather than a loose object: a type added
+ * to the domain with no wording here fails to compile, which is what stops a
+ * storekeeper being shown `LTN4_STOCK_OUT` in a list of French sentences.
+ */
+export const NOTIFICATION_TYPE_LABELS_FR: Readonly<Record<NotificationType, string>> = {
+  STOCK_CRITICAL: "Stock critique",
+  STOCK_RUPTURE: "Rupture de stock",
+  REQUEST_CREATED: "Demande a traiter",
+  REQUEST_APPROVED: "Demande validee",
+  REQUEST_REJECTED: "Demande refusee",
+  REQUEST_SHIPPED: "Demande expediee",
+  REQUEST_RECEIVED: "Demande receptionnee",
+  REQUEST_LATE: "Demande en retard",
+  LTN4_STOCK_OUT: "Rupture signalee par LTN4",
+};
+
+/** Which end of a transfer a plant sits on. */
+export const SITE_TYPE_LABELS_FR: Readonly<Record<SiteType, string>> = {
+  CONSUMING: "Consommateur",
+  SUPPLYING: "Fournisseur",
 };
 
 export const MOVEMENT_TYPE_LABELS_FR = {

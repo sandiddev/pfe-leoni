@@ -26,8 +26,14 @@ export {
 } from "./lib/format";
 
 // --- Primitives -------------------------------------------------------------
+export {
+  AlertDialog,
+  type AlertDialogProps,
+} from "./primitives/alert-dialog";
+export { Avatar, type AvatarProps, initialsOf } from "./primitives/avatar";
 export { Badge, type BadgeProps, badgeVariants } from "./primitives/badge";
 export { Button, type ButtonProps, buttonVariants } from "./primitives/button";
+export { Checkbox } from "./primitives/checkbox";
 export {
   Card,
   CardContent,
@@ -36,8 +42,31 @@ export {
   CardHeader,
   CardTitle,
 } from "./primitives/card";
+export { Dialog, type DialogProps } from "./primitives/dialog";
+export {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./primitives/dropdown-menu";
 export { Input, Label } from "./primitives/input";
+export { Pagination, type PaginationProps } from "./primitives/pagination";
+export { Select } from "./primitives/select";
+export { Separator } from "./primitives/separator";
 export { Skeleton } from "./primitives/skeleton";
+export { Spinner, type SpinnerProps } from "./primitives/spinner";
+export { Switch } from "./primitives/switch";
+export { Tabs, TabsContent, TabsList, TabsTrigger } from "./primitives/tabs";
+export { Textarea } from "./primitives/textarea";
+export {
+  type ToastOptions,
+  type ToastTone,
+  Toaster,
+  useToast,
+} from "./primitives/toast";
+export { Tooltip, type TooltipProps, TooltipProvider } from "./primitives/tooltip";
 export {
   Table,
   TableBody,
@@ -52,7 +81,17 @@ export {
 
 // --- Patterns ---------------------------------------------------------------
 export { AlertLevelBadge, type AlertLevelBadgeProps } from "./patterns/alert-level-badge";
+export { Breadcrumbs, type BreadcrumbsProps, type Crumb } from "./patterns/breadcrumbs";
+export { ConfirmButton, type ConfirmButtonProps } from "./patterns/confirm-button";
+export { DataTableShell, type DataTableShellProps } from "./patterns/data-table-shell";
 export { EmptyState, type EmptyStateProps } from "./patterns/empty-state";
+export { Field, type FieldProps } from "./patterns/field";
 export { PageHeader, type PageHeaderProps } from "./patterns/page-header";
 export { RequestStatusBadge, type RequestStatusBadgeProps } from "./patterns/request-status-badge";
+export {
+  type SortDirection,
+  SortableTableHead,
+  type SortableTableHeadProps,
+} from "./patterns/sortable-table-head";
 export { StatCard, type StatCardProps } from "./patterns/stat-card";
+export { StatusStepper, type StatusStepperProps } from "./patterns/status-stepper";

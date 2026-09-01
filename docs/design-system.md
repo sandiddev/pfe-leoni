@@ -114,6 +114,25 @@ a number.
 - A visible focus ring is mandatory (`:focus-visible` in the base layer): parts of this
   application are driven with a barcode scanner and a keyboard, not a mouse.
 - Light-first. The dark palette redefines only the semantic layer, never the primitives.
+- **Two themes, two blocks, no third.** `:root` is light; `:root[data-theme="dark"]` is dark.
+  There is no `prefers-color-scheme` block: the theme script in `apps/web` resolves the
+  operating system preference to an explicit `data-theme` before the first paint, so
+  "follow the system" and "I chose dark" reach the stylesheet as the same thing. A media
+  query as well would mean every token written twice, and the copy that drifts is the one
+  nothing checks — which is exactly how the dark theme shipped without
+  `--color-foreground-on-primary`, putting white text on a light blue button.
+  `theme-parity.test.ts` fails the build if the two blocks stop matching.
+- **Both blocks set `color-scheme`.** Almost every input in this application is a native
+  control — `<select>`, `<input type="date">`, checkboxes, scrollbars — and the browser
+  paints those itself. Without `color-scheme: dark` they stay white, and a dark theme with
+  white holes punched through it is worse than no dark theme.
+- **In dark, elevation goes up, not down.** A shadow is invisible on a near-black page, so a
+  dialog reads as floating by sitting on `surface-raised` (lighter) rather than by having an
+  edge. `surface-sunken` is lighter than `surface` in dark for the same reason — the role is
+  "a distinct band", and darker would merge it into the background.
+- **Signal colours move to the light end of their ramp in dark.** `orange-600` is the right
+  "critique" on white and about 3:1 on `gray-950`, which fails for the small text a badge is
+  made of. The `300`/`400` steps exist for this.
 
 ---
 

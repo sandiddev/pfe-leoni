@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { can } from "@leoni/core";
 import { PageHeader } from "@leoni/ui";
 import { ArticleTable } from "~/features/article/article-table";
 import { api } from "~/trpc/server";
@@ -14,13 +15,16 @@ export const metadata: Metadata = { title: "Articles" };
  * and sorting from then on happen in the client component below.
  */
 export default async function ArticlesPage() {
-  const page = await api.article.list({
-    limit: 25,
-    onlyReplenishable: false,
-    includeInactive: false,
-    sortBy: "reference",
-    sortDirection: "asc",
-  });
+  const [actor, page] = await Promise.all([
+    api.session.me(),
+    api.article.list({
+      limit: 25,
+      onlyReplenishable: false,
+      includeInactive: false,
+      sortBy: "reference",
+      sortDirection: "asc",
+    }),
+  ]);
 
   return (
     <div className="space-y-5">
@@ -29,7 +33,11 @@ export default async function ArticlesPage() {
         description={`${String(page.totalCount)} references suivies. Les seuils mini et maxi sont recalcules a partir de la consommation reelle.`}
       />
 
-      <ArticleTable initialItems={page.items} totalCount={page.totalCount} />
+      <ArticleTable
+        initialItems={page.items}
+        totalCount={page.totalCount}
+        canWrite={can(actor.role, "article:write")}
+      />
     </div>
   );
 }

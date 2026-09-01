@@ -3,12 +3,14 @@ import type {
   ArticleDetail,
   ArticleListInput,
   ArticleListItem,
+  CreateArticleInput,
   Page,
   UpdateArticleInput,
 } from "@leoni/contracts";
 import {
   ABC_CLASSES,
   type AbcClass,
+  BusinessRuleError,
   type ClassParameters,
   computeLegacyThresholds,
   daysOfCoverage,
@@ -20,7 +22,8 @@ import type { Actor } from "../../context";
 import { assertCanAccessSite, resolveSiteFilter } from "../../middlewares/site-scope";
 import type { AuditPayload } from "../../shared/audit";
 import * as mapper from "./article.mapper";
-import { articleRepository, type ArticleRepository } from "./article.repository";
+import type { ArticleRepository, StockItemRow } from "./article.repository";
+import { articleRepository } from "./article.repository";
 
 /**
  * Business rules for the article module.
@@ -77,16 +80,29 @@ async function loadParametersByClass(
 }
 
 /**
- * Reads a class out of the map built above.
+ * The parameters that actually govern one row.
  *
- * The map is total, but `Map.get` is typed as possibly-undefined and there is
- * no honest way to tell the compiler otherwise. Narrowing here — once, with the
- * same defaults as the loader — beats a `!` at each call site.
+ * An article-level override beats its class default (brief section 3.4). The
+ * map is total, but `Map.get` is typed as possibly-undefined and there is no
+ * honest way to tell the compiler otherwise — narrowing here, once, with the
+ * same defaults as the loader, beats a `!` at each call site.
  */
 function parametersFor(
   byClass: ReadonlyMap<AbcClass, ClassParameters>,
-  abcClass: AbcClass,
+  row: StockItemRow,
 ): ClassParameters {
+  const override = row.article.parameter;
+
+  if (override !== null) {
+    return {
+      safetyDays: override.safetyDays.toNumber(),
+      extraCoverageDays: override.extraCoverageDays.toNumber(),
+      averagingWindowDays: override.averagingWindowDays,
+      warningMarginRatio: override.warningMarginRatio.toNumber(),
+    };
+  }
+
+  const abcClass = row.article.abcClass;
   return byClass.get(abcClass) ?? defaultParametersForClass(abcClass);
 }
 
@@ -117,7 +133,7 @@ export async function list({
   const page = hasMore ? rows.slice(0, input.limit) : rows;
 
   const items = page.map((row) => {
-    const parameters = parametersFor(parametersByClass, row.article.abcClass);
+    const parameters = parametersFor(parametersByClass, row);
     return mapper.toListItem({
       row,
       safetyDays: parameters.safetyDays,
@@ -169,7 +185,7 @@ export async function byId({
   assertCanAccessSite(actor, row.site.id);
 
   const parametersByClass = await loadParametersByClass(repository);
-  const parameters = parametersFor(parametersByClass, row.article.abcClass);
+  const parameters = parametersFor(parametersByClass, row);
 
   const [lots, movements, thresholdHistory] = await Promise.all([
     repository.findLots(row.id),
@@ -200,6 +216,64 @@ export async function byId({
     thresholdHistory: thresholdHistory.map(mapper.toThresholdHistoryPoint),
     legacyThresholds: { min: legacy.min, max: legacy.max },
   };
+}
+
+/**
+ * Creates an article and its stock rows.
+ *
+ * Authorisation is the router's concern (`article:write`, Administrator only).
+ * What belongs here is the consequence: an article exists at every plant or at
+ * none, because `StockItem` is what every screen reads. The thresholds start at
+ * zero and stay there until a recalculation has real consumption to work from —
+ * inventing a Min for an article nobody has consumed yet would put it on the
+ * alert board on the day it was created.
+ */
+export async function create({
+  actor,
+  input,
+  repository = articleRepository,
+}: ServiceParams<CreateArticleInput>): Promise<{ articleId: string; reference: string }> {
+  const existing = await repository.findByReference(input.reference);
+
+  if (existing !== null) {
+    // Caught here rather than left to the unique index, so the message is
+    // French and names the reference instead of a constraint.
+    throw new BusinessRuleError(`La reference ${input.reference} existe deja.`, {
+      reference: input.reference,
+    });
+  }
+
+  const sites = await repository.findAllSites();
+
+  if (sites.length === 0) {
+    throw new BusinessRuleError("Aucun site n est configure : creez un site d abord.", {});
+  }
+
+  const articleId = crypto.randomUUID();
+
+  const data = {
+    reference: input.reference,
+    designation: input.designation,
+    vpe: input.vpe,
+    leadTimeDays: input.leadTimeDays,
+    abcClass: input.abcClass,
+  };
+
+  await repository.createWithAudit({
+    articleId,
+    data,
+    stockItems: sites.map((site) => ({ siteId: site.id, currentStock: input.initialStock })),
+    audit: {
+      entity: "Article",
+      entityId: articleId,
+      action: "CREATE",
+      before: null,
+      after: { ...data, initialStock: input.initialStock },
+      actorId: actor.userId,
+    },
+  });
+
+  return { articleId, reference: input.reference };
 }
 
 /** The master-data fields this operation can change, and therefore audits. */

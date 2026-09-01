@@ -20,6 +20,19 @@
    NOTE ON BRAND COLOUR: --leoni-blue-600 below is a placeholder approximating
    LEONI corporate blue. Replace the ramp with the exact values from the brand
    guidelines; nothing else in the codebase needs to change.
+
+   THEMING. There are exactly two themes and exactly two places they are
+   defined: `:root` is light, `:root[data-theme="dark"]` is dark. There is no
+   `prefers-color-scheme` block, deliberately — the theme script in the web app
+   resolves the operating system preference to an explicit `data-theme` before
+   the first paint, so "follow the system" and "I chose dark" arrive here as the
+   same thing.
+
+   The alternative — a media query *and* an attribute block — means every token
+   is written twice and the two copies drift. That had already happened: the
+   dark block was missing `--color-foreground-on-primary`, which put white text
+   on a light blue button. `theme-parity.test.ts` now fails the build if the two
+   blocks stop matching.
    ========================================================================== */
 
 @theme {
@@ -48,21 +61,33 @@
   --color-gray-900: oklch(0.19 0.007 250);
   --color-gray-950: oklch(0.13 0.006 250);
 
-  /* --- Primitive: signal colours ---------------------------------------- */
+  /* --- Primitive: signal colours ----------------------------------------
+     Each ramp carries a light end as well as a dark one. A signal colour chosen
+     for white paper is too dark to read on a near-black surface: green-600 on
+     gray-950 is about 3:1, which fails for the small text a status badge is.
+     The 300/400 steps are what the dark theme uses for the same roles. */
   --color-green-100: oklch(0.94 0.05 150);
+  --color-green-300: oklch(0.82 0.13 150);
+  --color-green-400: oklch(0.74 0.14 150);
   --color-green-600: oklch(0.55 0.14 150);
   --color-green-700: oklch(0.47 0.13 150);
 
   --color-amber-100: oklch(0.95 0.06 85);
+  --color-amber-300: oklch(0.86 0.13 85);
+  --color-amber-400: oklch(0.81 0.14 80);
   --color-amber-500: oklch(0.75 0.15 75);
   --color-amber-600: oklch(0.68 0.16 65);
   --color-amber-700: oklch(0.57 0.15 60);
 
   --color-orange-100: oklch(0.94 0.06 45);
+  --color-orange-300: oklch(0.82 0.13 45);
+  --color-orange-400: oklch(0.75 0.16 43);
   --color-orange-600: oklch(0.62 0.18 40);
   --color-orange-700: oklch(0.53 0.17 38);
 
   --color-red-100: oklch(0.94 0.045 25);
+  --color-red-300: oklch(0.8 0.13 25);
+  --color-red-400: oklch(0.71 0.17 25);
   --color-red-600: oklch(0.55 0.21 25);
   --color-red-700: oklch(0.47 0.19 25);
 
@@ -73,12 +98,27 @@
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   /* --- Elevation ---------------------------------------------------------
-     Declared here rather than on :root so Tailwind generates `shadow-card` and
-     `shadow-raised` utilities. A shadow defined only as a custom property would
-     have to be reached with an arbitrary value, which the design-system lint
-     rule forbids — correctly. */
+     Declared here so Tailwind generates `shadow-card` and `shadow-raised`
+     utilities; the values are overridden per theme below. A shadow defined only
+     as a custom property would have to be reached with an arbitrary value,
+     which the design-system lint rule forbids — correctly.
+
+     These are the light values. A 5%-black shadow is invisible on a near-black
+     surface, so the dark theme replaces them rather than inheriting them —
+     without that, every card, dialog and menu loses its edge in dark mode. */
   --shadow-card: 0 1px 2px 0 oklch(0 0 0 / 0.05);
   --shadow-raised: 0 4px 12px -2px oklch(0 0 0 / 0.08);
+
+  /* --- Dialog --------------------------------------------------------------
+     A modal is comfortable to read at around 32rem, and must still fit a phone
+     with a gutter. Declared as a theme width so `w-dialog` exists: reaching for
+     the same expression as an arbitrary value in the component is what the
+     design-system lint rule forbids, and it forbids it correctly. */
+  --width-dialog: min(32rem, calc(100vw - 2rem));
+
+  /* A modal never grows past the viewport: a long form whose footer is pushed
+     off-screen hides its own submit button. The body scrolls instead. */
+  --height-dialog: 85vh;
 
   /* --- Radii ------------------------------------------------------------- */
   --radius-sm: 0.25rem;
@@ -92,8 +132,18 @@
    ========================================================================== */
 
 :root {
+  /* Tells the browser which way its own widgets should render. Without it a
+     native <select>, an <input type="date"> picker and the scrollbars stay
+     light on a dark page — and this application is built almost entirely out
+     of native form controls, so it is the difference between a dark theme and
+     a dark theme with white holes punched through it. */
+  color-scheme: light;
+
   --color-background: var(--color-gray-50);
   --color-surface: white;
+  /* Anything that floats: dialogs, menus, toasts. Identical to `surface` on
+     white paper, distinct in the dark theme, where elevation is expressed by
+     getting lighter rather than by a shadow. */
   --color-surface-raised: white;
   --color-surface-sunken: var(--color-gray-100);
 
@@ -119,10 +169,15 @@
   --color-success: var(--color-green-600);
   --color-success-subtle: var(--color-green-100);
 
+  /* Backdrop behind a modal. A semantic token rather than a primitive, because
+     the two themes dim by different amounts: the same 45% black that reads as
+     a scrim over white paper barely registers over a near-black page. */
+  --color-overlay: oklch(0 0 0 / 0.45);
+
   /* --- Domain status tokens ---------------------------------------------
      The four stock alert levels are part of the design system, not a decision
      each screen makes for itself. The alert board, the article detail, the
-     dashboard and the PDF export must all render "Critique" the same colour;
+     dashboard and the CSV export must all render "Critique" the same colour;
      three inline choices drift, one token does not. */
   --color-status-normal: var(--color-green-600);
   --color-status-normal-subtle: var(--color-green-100);
@@ -146,62 +201,86 @@
 
 /* ==========================================================================
    Semantic tokens — dark theme
-   Only the semantic layer is redefined; the primitives are untouched.
+
+   One block, reached by an explicit `data-theme="dark"`. The theme script
+   resolves the operating system preference before first paint, so there is no
+   `prefers-color-scheme` copy of this list to keep in step.
+
+   Every token above appears below. `theme-parity.test.ts` enforces that, and
+   it exists because the first version of this block was missing
+   `--color-foreground-on-primary` — which left white text on a light blue
+   button, unreadable, on every primary action in the application.
+
+   Two inversions worth naming:
+
+   - Elevation goes *up* in lightness. On paper a raised surface casts a
+     shadow; on a near-black screen a shadow is invisible, so a dialog reads as
+     floating by being lighter than the page rather than by having an edge.
+   - Signal colours move to the light end of their ramp. Orange-600 is the
+     right "critique" on white and about 3:1 on gray-950, which fails for the
+     small text a badge is made of.
    ========================================================================== */
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --color-background: var(--color-gray-950);
-    --color-surface: var(--color-gray-900);
-    --color-surface-raised: var(--color-gray-800);
-    --color-surface-sunken: var(--color-gray-950);
-
-    --color-foreground: var(--color-gray-100);
-    --color-foreground-muted: var(--color-gray-400);
-    --color-foreground-subtle: var(--color-gray-500);
-
-    --color-border: var(--color-gray-800);
-    --color-border-strong: var(--color-gray-700);
-
-    --color-primary: var(--color-leoni-blue-400);
-    --color-primary-hover: var(--color-leoni-blue-300);
-    --color-primary-subtle: var(--color-leoni-blue-900);
-    --color-primary-border: var(--color-leoni-blue-800);
-
-    --color-primary-subtle: oklch(0.25 0.075 250);
-    --color-status-normal-subtle: oklch(0.28 0.05 150);
-    --color-status-warning-subtle: oklch(0.3 0.06 75);
-    --color-status-critical-subtle: oklch(0.3 0.07 45);
-    --color-status-rupture-subtle: oklch(0.3 0.07 25);
-    --color-destructive-subtle: oklch(0.3 0.07 25);
-    --color-success-subtle: oklch(0.28 0.05 150);
-  }
-}
-
 :root[data-theme="dark"] {
+  color-scheme: dark;
+
   --color-background: var(--color-gray-950);
   --color-surface: var(--color-gray-900);
   --color-surface-raised: var(--color-gray-800);
-  --color-surface-sunken: var(--color-gray-950);
+  /* Lighter than the surface it sits on, not darker. "Sunken" describes the
+     role — a table header, a hover band, a code block — and on a dark page a
+     subtle lift is what reads as a distinct region. Making it darker would
+     merge it into the background instead. */
+  --color-surface-sunken: var(--color-gray-800);
 
   --color-foreground: var(--color-gray-100);
   --color-foreground-muted: var(--color-gray-400);
   --color-foreground-subtle: var(--color-gray-500);
+  /* The primary surface is a light blue here, so what sits on it is dark.
+     Inheriting the light theme's white was the bug this block was missing. */
+  --color-foreground-on-primary: var(--color-gray-950);
 
   --color-border: var(--color-gray-800);
   --color-border-strong: var(--color-gray-700);
 
   --color-primary: var(--color-leoni-blue-400);
   --color-primary-hover: var(--color-leoni-blue-300);
-  --color-primary-subtle: oklch(0.25 0.075 250);
+  --color-primary-subtle: var(--color-leoni-blue-900);
   --color-primary-border: var(--color-leoni-blue-800);
 
-  --color-status-normal-subtle: oklch(0.28 0.05 150);
-  --color-status-warning-subtle: oklch(0.3 0.06 75);
-  --color-status-critical-subtle: oklch(0.3 0.07 45);
-  --color-status-rupture-subtle: oklch(0.3 0.07 25);
+  --color-ring: var(--color-leoni-blue-400);
+
+  --color-destructive: var(--color-red-400);
+  --color-destructive-hover: var(--color-red-300);
+  /* The "subtle" backgrounds are a dark tint of the signal, not a pale one:
+     a 94%-lightness red panel on a dark page is a flashbang. */
   --color-destructive-subtle: oklch(0.3 0.07 25);
+
+  --color-success: var(--color-green-400);
   --color-success-subtle: oklch(0.28 0.05 150);
+
+  --color-overlay: oklch(0 0 0 / 0.65);
+
+  --color-status-normal: var(--color-green-400);
+  --color-status-normal-subtle: oklch(0.28 0.05 150);
+  --color-status-warning: var(--color-amber-400);
+  --color-status-warning-subtle: oklch(0.3 0.06 75);
+  --color-status-critical: var(--color-orange-400);
+  --color-status-critical-subtle: oklch(0.3 0.07 45);
+  --color-status-rupture: var(--color-red-400);
+  --color-status-rupture-subtle: oklch(0.3 0.07 25);
+
+  --color-phase-draft: var(--color-gray-400);
+  --color-phase-pending: var(--color-amber-400);
+  --color-phase-active: var(--color-leoni-blue-400);
+  --color-phase-done: var(--color-green-400);
+  --color-phase-stopped: var(--color-red-400);
+
+  /* Elevation, restated. The light theme's 5%-black shadow does not exist on a
+     near-black page; these are deep enough to read, and the raised surfaces
+     above carry most of the separation anyway. */
+  --shadow-card: 0 1px 2px 0 oklch(0 0 0 / 0.5);
+  --shadow-raised: 0 8px 24px -4px oklch(0 0 0 / 0.7);
 }
 
 /* Expose the semantic tokens to Tailwind so `bg-surface`, `text-foreground-muted`
@@ -227,6 +306,7 @@
   --color-destructive-subtle: var(--color-destructive-subtle);
   --color-success: var(--color-success);
   --color-success-subtle: var(--color-success-subtle);
+  --color-overlay: var(--color-overlay);
   --color-status-normal: var(--color-status-normal);
   --color-status-normal-subtle: var(--color-status-normal-subtle);
   --color-status-warning: var(--color-status-warning);

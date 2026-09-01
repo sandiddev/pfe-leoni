@@ -38,11 +38,11 @@ export default async function AppLayout({ children }: { readonly children: React
       <AppSidebar role={role} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <AppTopbar userName={session.user.name} role={role} />
+        <AppTopbar userName={session.user.name} email={session.user.email} role={role} />
 
         {/* `min-w-0` above and here is what lets a wide table scroll inside its
             own container instead of stretching the page sideways. */}
-        <main className="min-w-0 flex-1 px-6 py-6">{children}</main>
+        <main id="contenu" className="min-w-0 flex-1 px-4 py-6 sm:px-6">{children}</main>
       </div>
     </div>
   );
