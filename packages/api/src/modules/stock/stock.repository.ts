@@ -3,6 +3,8 @@ import type { AlertLevel, MovementType } from "@leoni/core";
 import type { Prisma } from "@leoni/db";
 import { db } from "@leoni/db";
 
+import { guarded } from "../../shared/conflict";
+
 /**
  * Persistence for the stock module.
  *
@@ -188,6 +190,8 @@ export type LotWrite =
       readonly lotId: string;
       /** The lot's quantity after the draw, not the amount taken. */
       readonly quantity: number;
+      /** What the lot held when FIFO allocated against it, for the guard. */
+      readonly expectedQuantity: number;
     };
 
 export interface RecordMovementOptions {
@@ -204,6 +208,8 @@ export interface RecordMovementOptions {
   readonly lotWrites: readonly LotWrite[];
   /** Identifier for a lot the service asked to create, if any. */
   readonly newLotId: string | null;
+  /** The level the service read and computed `newStock` from. */
+  readonly expectedCurrentStock: number;
   readonly newStock: number;
   readonly alertLevel: AlertLevel;
 }
@@ -227,46 +233,56 @@ export async function recordMovementWithStockUpdate(
 
   const drawnFrom = lotWrites.find((write) => write.kind === "draw")?.lotId ?? null;
 
-  await db.$transaction([
-    // The lots first. Prisma runs a statement list in order and Postgres checks
-    // the foreign key immediately, so a movement created before the lot it
-    // points at fails on `stock_movement_lotId_fkey` — which is exactly what
-    // happened the first time this ran against a real database.
-    ...lotWrites.map((write) =>
-      write.kind === "create"
-        ? db.stockLot.create({
-            data: {
-              ...(newLotId === null ? {} : { id: newLotId }),
-              stockItemId,
-              storageLocationId: write.storageLocationId,
-              quantity: write.quantity,
-              fifoDate: write.fifoDate,
-            },
-          })
-        : db.stockLot.update({ where: { id: write.lotId }, data: { quantity: write.quantity } }),
-    ),
+  await guarded(
+    () =>
+      db.$transaction([
+        // The lots first. Prisma runs a statement list in order and Postgres checks
+        // the foreign key immediately, so a movement created before the lot it
+        // points at fails on `stock_movement_lotId_fkey` — which is exactly what
+        // happened the first time this ran against a real database.
+        ...lotWrites.map((write) =>
+          write.kind === "create"
+            ? db.stockLot.create({
+                data: {
+                  ...(newLotId === null ? {} : { id: newLotId }),
+                  stockItemId,
+                  storageLocationId: write.storageLocationId,
+                  quantity: write.quantity,
+                  fifoDate: write.fifoDate,
+                },
+              })
+            : db.stockLot.update({
+                // Guarded on the quantity FIFO allocated against: another picker
+                // drawing from the same lot invalidates this arithmetic.
+                where: { id: write.lotId, quantity: write.expectedQuantity },
+                data: { quantity: write.quantity },
+              }),
+        ),
 
-    db.stockMovement.create({
-      data: {
-        id: options.movementId,
-        stockItemId,
-        type: options.type,
-        quantity: options.quantity,
-        occurredAt: options.occurredAt,
-        reference: options.reference,
-        note: options.note,
-        userId: options.userId,
-        // An inbound movement points at the lot it created; an outbound one at
-        // the oldest lot it drew from, which is the one a picker went to.
-        lotId: newLotId ?? drawnFrom,
-      },
-    }),
+        db.stockMovement.create({
+          data: {
+            id: options.movementId,
+            stockItemId,
+            type: options.type,
+            quantity: options.quantity,
+            occurredAt: options.occurredAt,
+            reference: options.reference,
+            note: options.note,
+            userId: options.userId,
+            // An inbound movement points at the lot it created; an outbound one at
+            // the oldest lot it drew from, which is the one a picker went to.
+            lotId: newLotId ?? drawnFrom,
+          },
+        }),
 
-    db.stockItem.update({
-      where: { id: stockItemId },
-      data: { currentStock: newStock, alertLevel },
-    }),
-  ]);
+        db.stockItem.update({
+          where: { id: stockItemId, currentStock: options.expectedCurrentStock },
+          data: { currentStock: newStock, alertLevel },
+        }),
+      ]),
+    "Le stock de cet article a change entre-temps. Rechargez la page et reessayez.",
+    { stockItemId },
+  );
 }
 
 export const stockRepository = {

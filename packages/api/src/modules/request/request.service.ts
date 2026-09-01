@@ -397,6 +397,7 @@ function planReceipt(inputs: ReceiptPlanInputs): readonly StockEntryWrite[] {
       stockItemId: target.id,
       storageLocationId: locationId,
       quantity,
+      expectedCurrentStock: target.currentStock,
       newStock,
       alertLevel: resolveAlertLevel({
         currentStock: newStock,

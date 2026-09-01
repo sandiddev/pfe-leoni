@@ -211,9 +211,11 @@ describe("stock service - recording a movement", () => {
     });
 
     // 600 from the January lot, then 100 from the February one.
+    // `expectedQuantity` is what each lot held before the draw: it is the guard
+    // the write is made under, so it belongs in the assertion.
     expect(written.options().lotWrites).toEqual([
-      { kind: "draw", lotId: "lot-old", quantity: 0 },
-      { kind: "draw", lotId: "lot-new", quantity: 300 },
+      { kind: "draw", lotId: "lot-old", quantity: 0, expectedQuantity: 600 },
+      { kind: "draw", lotId: "lot-new", quantity: 300, expectedQuantity: 400 },
     ]);
   });
 
@@ -236,6 +238,26 @@ describe("stock service - recording a movement", () => {
     expect(options.newStock).toBe(900);
     expect(options.lotWrites.length).toBeGreaterThan(0);
     expect(options.userId).toBe("user-1");
+  });
+
+  it("hands the repository the level it computed from, not just the result", async () => {
+    // `newStock` is only meaningful next to the figure it was derived from: the
+    // repository guards the write on it, so a service that computed 900 from a
+    // stock of 1 000 must say so. Passing the result alone is what let a second
+    // concurrent movement overwrite the first.
+    const written = captureWrite();
+
+    await service.record({
+      actor: actor(),
+      input: { articleId: "article-1", type: "EXIT", quantity: 100 },
+      repository: stubRepository({
+        findStockItemForMovement: async () => stockItem({ currentStock: 1_000 }),
+        recordMovementWithStockUpdate: written.capture,
+      }),
+    });
+
+    expect(written.options().expectedCurrentStock).toBe(1_000);
+    expect(written.options().newStock).toBe(900);
   });
 
   it("lands an entry on the requested shelf as a new lot", async () => {
@@ -410,9 +432,11 @@ describe("stock service - inventory count", () => {
     });
 
     // 700 missing: the whole January lot and 100 of the February one.
+    // `expectedQuantity` is what each lot held before the draw: it is the guard
+    // the write is made under, so it belongs in the assertion.
     expect(written.options().lotWrites).toEqual([
-      { kind: "draw", lotId: "lot-old", quantity: 0 },
-      { kind: "draw", lotId: "lot-new", quantity: 300 },
+      { kind: "draw", lotId: "lot-old", quantity: 0, expectedQuantity: 600 },
+      { kind: "draw", lotId: "lot-new", quantity: 300, expectedQuantity: 400 },
     ]);
   });
 

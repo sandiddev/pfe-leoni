@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   BusinessRuleError,
+  ConflictError,
   DomainError,
   ForbiddenActionError,
   InvalidInputError,
@@ -24,6 +25,17 @@ describe("the domain error hierarchy", () => {
     expect(new TransitionNotAllowedError("x").code).toBe("TRANSITION_NOT_ALLOWED");
     expect(new ForbiddenActionError("x").code).toBe("FORBIDDEN_ACTION");
     expect(new NotFoundError("x").code).toBe("NOT_FOUND");
+    expect(new ConflictError("x").code).toBe("CONFLICT");
+  });
+
+  it("separates a lost race from an illegal move", () => {
+    // Both surface as HTTP 409, and they mean different things to the user: one
+    // says reload, the other says you may not. Sharing a code would make the
+    // UI unable to tell a stale screen from a forbidden action.
+    expect(new ConflictError("x").code).not.toBe(new TransitionNotAllowedError("x").code);
+    expect(new ConflictError("x", { requestId: "r1" }).details).toStrictEqual({
+      requestId: "r1",
+    });
   });
 
   it("routes a missing entity through the domain hierarchy, not a bare Error", () => {

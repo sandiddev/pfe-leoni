@@ -9,6 +9,8 @@ import type {
 import type { Prisma } from "@leoni/db";
 import { db } from "@leoni/db";
 
+import { guarded } from "../../shared/conflict";
+
 /**
  * Persistence for the request workflow.
  *
@@ -338,6 +340,14 @@ export interface StockEntryWrite {
   readonly stockItemId: string;
   readonly storageLocationId: string;
   readonly quantity: number;
+  /**
+   * The level the service read and computed `newStock` from.
+   *
+   * Carried so the write can assert nothing moved in between. Without it the
+   * update is "set the stock to the number I worked out a moment ago", which
+   * discards any movement recorded by somebody else in that moment.
+   */
+  readonly expectedCurrentStock: number;
   readonly newStock: number;
   readonly alertLevel: AlertLevel;
 }
@@ -415,58 +425,70 @@ function notificationStatements(options: ApplyTransitionOptions) {
  * check caught exactly this refactor, so the shape stays.
  */
 export async function applyTransition(options: ApplyTransitionOptions): Promise<void> {
-  await db.$transaction([
-    db.replenishmentRequest.update({
-      where: { id: options.requestId },
-      data: transitionData(options),
-    }),
+  await guarded(
+    () =>
+      db.$transaction([
+        db.replenishmentRequest.update({
+          // The status is part of the key on purpose: this is the same status
+          // the service validated the transition against. If somebody else
+          // moved the request in between, no row matches and the whole
+          // transaction rolls back rather than applying a second time.
+          where: { id: options.requestId, status: options.fromStatus },
+          data: transitionData(options),
+        }),
 
-    db.requestStatusHistory.create({
-      data: {
-        requestId: options.requestId,
-        fromStatus: options.fromStatus,
-        toStatus: options.toStatus,
-        action: options.action,
-        reason: options.reason,
-        userId: options.userId,
-        occurredAt: options.occurredAt,
-      },
-    }),
+        db.requestStatusHistory.create({
+          data: {
+            requestId: options.requestId,
+            fromStatus: options.fromStatus,
+            toStatus: options.toStatus,
+            action: options.action,
+            reason: options.reason,
+            userId: options.userId,
+            occurredAt: options.occurredAt,
+          },
+        }),
 
-    ...lineStatements(options),
+        ...lineStatements(options),
 
-    // The lot before the movement that points at it: a statement list runs in
-    // order and Postgres checks the foreign key immediately.
-    ...options.stockEntries.flatMap((entry) => [
-      db.stockLot.create({
-        data: {
-          id: entry.lotId,
-          stockItemId: entry.stockItemId,
-          storageLocationId: entry.storageLocationId,
-          quantity: entry.quantity,
-          fifoDate: options.occurredAt,
-        },
-      }),
-      db.stockMovement.create({
-        data: {
-          id: entry.movementId,
-          stockItemId: entry.stockItemId,
-          type: "ENTRY",
-          quantity: entry.quantity,
-          occurredAt: options.occurredAt,
-          reference: options.requestId,
-          userId: options.userId,
-          lotId: entry.lotId,
-        },
-      }),
-      db.stockItem.update({
-        where: { id: entry.stockItemId },
-        data: { currentStock: entry.newStock, alertLevel: entry.alertLevel },
-      }),
-    ]),
+        // The lot before the movement that points at it: a statement list runs
+        // in order and Postgres checks the foreign key immediately.
+        ...options.stockEntries.flatMap((entry) => [
+          db.stockLot.create({
+            data: {
+              id: entry.lotId,
+              stockItemId: entry.stockItemId,
+              storageLocationId: entry.storageLocationId,
+              quantity: entry.quantity,
+              fifoDate: options.occurredAt,
+            },
+          }),
+          db.stockMovement.create({
+            data: {
+              id: entry.movementId,
+              stockItemId: entry.stockItemId,
+              type: "TRANSFER_IN",
+              quantity: entry.quantity,
+              occurredAt: options.occurredAt,
+              reference: options.requestId,
+              userId: options.userId,
+              lotId: entry.lotId,
+            },
+          }),
+          db.stockItem.update({
+            // Same guard as the status above: `newStock` was computed from
+            // `expectedCurrentStock`, so the write is only valid while that is
+            // still what the row holds.
+            where: { id: entry.stockItemId, currentStock: entry.expectedCurrentStock },
+            data: { currentStock: entry.newStock, alertLevel: entry.alertLevel },
+          }),
+        ]),
 
-    ...notificationStatements(options),
-  ]);
+        ...notificationStatements(options),
+      ]),
+    "Cette demande a change entre-temps. Rechargez la page et reessayez.",
+    { requestId: options.requestId, fromStatus: options.fromStatus },
+  );
 }
 
 /**

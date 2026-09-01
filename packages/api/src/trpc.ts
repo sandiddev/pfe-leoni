@@ -5,6 +5,7 @@ import { z, ZodError } from "zod";
 import {
   BusinessRuleError,
   can,
+  ConflictError,
   ForbiddenActionError,
   InvalidInputError,
   isDomainError,
@@ -70,6 +71,12 @@ function toTRPCError(error: unknown): TRPCError {
   }
   if (error instanceof TransitionNotAllowedError) {
     // The request is well-formed; it is the current state that forbids it.
+    return new TRPCError({ code: "CONFLICT", message: error.message, cause: error });
+  }
+  if (error instanceof ConflictError) {
+    // Also 409, and deliberately a separate arm: `domainCode` distinguishes
+    // "you may not" from "somebody got there first", which are different
+    // instructions to the person reading the toast.
     return new TRPCError({ code: "CONFLICT", message: error.message, cause: error });
   }
   if (error instanceof NotFoundError) {

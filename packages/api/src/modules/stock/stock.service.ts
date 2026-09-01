@@ -166,6 +166,9 @@ function planLots(inputs: LotPlanInputs): readonly LotWrite[] {
     kind: "draw" as const,
     lotId: allocation.lotId,
     quantity: allocation.remaining,
+    // What the lot held before this draw. `remaining + quantity` rather than a
+    // second lookup: FIFO already computed both halves from the row it read.
+    expectedQuantity: allocation.remaining + allocation.quantity,
   }));
 }
 
@@ -258,6 +261,7 @@ async function writeMovement(inputs: WriteMovementInputs): Promise<RecordMovemen
     note: details.note,
     userId: actor.userId,
     lotWrites,
+    expectedCurrentStock: previousStock,
     newStock,
     alertLevel,
   });

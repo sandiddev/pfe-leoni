@@ -40,6 +40,7 @@ export {
 // --- Errors ----------------------------------------------------------------
 export {
   BusinessRuleError,
+  ConflictError,
   DomainError,
   ForbiddenActionError,
   InvalidInputError,

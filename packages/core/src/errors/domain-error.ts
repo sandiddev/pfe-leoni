@@ -54,6 +54,25 @@ export class ForbiddenActionError extends DomainError {
   override readonly code = "FORBIDDEN_ACTION";
 }
 
+/**
+ * Somebody else changed the row between the read that validated the write and
+ * the write itself.
+ *
+ * Distinct from `TransitionNotAllowedError`, which says the move is illegal from
+ * the state the caller was looking at. This one says the move was legal and the
+ * state has since moved on, so the correct response is "reload and look again",
+ * not "you may not do that".
+ *
+ * The repository raises it when a guarded `updateMany` matches no row: two
+ * storekeepers pressing the same button on the same request, or recording
+ * movements against the same article at the same moment. Without it, the second
+ * write silently overwrote the first — a stock level computed from a figure that
+ * was already stale, with no trace that anything was lost.
+ */
+export class ConflictError extends DomainError {
+  override readonly code = "CONFLICT";
+}
+
 export function isDomainError(error: unknown): error is DomainError {
   return error instanceof DomainError;
 }
