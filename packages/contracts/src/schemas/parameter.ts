@@ -132,5 +132,14 @@ export interface RecalculationResult {
   readonly evaluated: number;
   readonly changed: number;
   readonly nowCritical: number;
+  /**
+   * Articles the Pareto pass moved to a different class (brief section 5).
+   *
+   * Reported separately from `changed` because it is a different kind of
+   * change: a threshold moving is the model responding to demand, while a class
+   * moving means the *parameters* an article is governed by have changed, which
+   * is worth a second look from whoever ran it.
+   */
+  readonly reclassified: number;
   readonly runAt: Date;
 }

@@ -327,6 +327,27 @@ export async function findByReference(reference: string) {
   return db.article.findUnique({ where: { reference }, select: { id: true } });
 }
 
+/** Existing references, so an import can tell a create from an update. */
+export async function findByReferences(references: readonly string[]) {
+  return db.article.findMany({
+    where: { reference: { in: [...references] } },
+    select: {
+      id: true,
+      reference: true,
+      designation: true,
+      vpe: true,
+      leadTimeDays: true,
+      abcClass: true,
+      isActive: true,
+    },
+  });
+}
+
+/** Plants by code, which is how a CSV names them. */
+export async function findSitesWithCodes() {
+  return db.site.findMany({ select: { id: true, code: true }, orderBy: { code: "asc" } });
+}
+
 /** Every plant an article must have a stock row at. */
 export async function findAllSites() {
   return db.site.findMany({ select: { id: true }, orderBy: { code: "asc" } });
@@ -370,6 +391,8 @@ export const articleRepository = {
   findMany,
   findAllSites,
   findByReference,
+  findByReferences,
+  findSitesWithCodes,
   createWithAudit,
   findByArticleAndSite,
   findLots,

@@ -76,3 +76,32 @@ export function isAtLeastAsSevere(level: AlertLevel, atLeast: AlertLevel): boole
 export function compareAlertSeverityDesc(left: AlertLevel, right: AlertLevel): number {
   return ALERT_LEVEL_SEVERITY[right] - ALERT_LEVEL_SEVERITY[left];
 }
+
+/** The levels that mean a replenishment is overdue rather than approaching. */
+export const SHORTAGE_LEVELS: readonly AlertLevel[] = ["CRITICAL", "RUPTURE"];
+
+/**
+ * Whether a level change is worth telling somebody about.
+ *
+ * A *crossing*, not a state: an article that was already critical and got a
+ * little more critical is not news, and notifying on every movement of an
+ * article sitting below its reorder point is how a notification centre becomes
+ * something people mute. What deserves an interruption is the moment the
+ * article enters shortage, and the moment it gets worse — critical to rupture,
+ * because the line is now actually starved.
+ *
+ * Recovery is deliberately silent. A stock that climbs back above Min is
+ * visible on the alert board, and telling five people that a problem stopped
+ * being a problem trains them to skim.
+ *
+ * `from` is null for an article that has no previous level to compare against —
+ * a stock row created with its first movement. Treated as a crossing if the new
+ * level is a shortage, because the first thing anybody should learn about a new
+ * reference is that it arrived already short.
+ */
+export function crossedIntoShortage(from: AlertLevel | null, to: AlertLevel): boolean {
+  if (!SHORTAGE_LEVELS.includes(to)) return false;
+  if (from === null) return true;
+
+  return ALERT_LEVEL_SEVERITY[to] > ALERT_LEVEL_SEVERITY[from];
+}

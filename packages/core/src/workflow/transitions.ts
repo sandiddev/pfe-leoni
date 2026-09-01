@@ -217,3 +217,98 @@ export const TRANSITIONS: Readonly<Record<RequestStatus, readonly TransitionDefi
   REJECTED: [],
   CANCELLED: [],
 };
+
+/**
+ * The line column each action records, and the columns it carries forward from.
+ *
+ * Here rather than in the API for the same reason `TRANSITIONS` is: it is read
+ * twice per state change — once on the server to decide which column a
+ * transition writes, and once in the UI to decide whether to ask for
+ * quantities at all. Deriving both from one table is why a dialog cannot offer
+ * a figure the server would ignore, and why adding a stage that records a
+ * quantity is a change to this file rather than a hunt through components.
+ *
+ * The client names the **action**, never the column. A payload that chose the
+ * column could write "received" while approving, which is how a service-level
+ * KPI quietly becomes fiction.
+ *
+ * An action absent from this table records no quantity: `markInTransit` moves a
+ * lorry, not a number, and `cancel` ends the request without one.
+ */
+/**
+ * The columns a transition may write.
+ *
+ * `requestedQuantity` is deliberately absent: it is what the storekeeper asked
+ * for, set once when the request is raised. A transition that could overwrite it
+ * would erase the demand the whole trail is measured against — the gap between
+ * requested and received *is* the service level.
+ */
+export const LINE_QUANTITY_FIELDS = [
+  "approvedQuantity",
+  "preparedQuantity",
+  "shippedQuantity",
+  "receivedQuantity",
+] as const;
+
+export type LineQuantityField = (typeof LINE_QUANTITY_FIELDS)[number];
+
+/**
+ * The columns a transition may read a carried-forward figure from.
+ *
+ * The mirror image: `requestedQuantity` is readable — it is where the chain
+ * starts — and `receivedQuantity` is not, because nothing happens after a
+ * receipt that needs to carry it forward.
+ */
+export const CARRIED_FROM_FIELDS = [
+  "requestedQuantity",
+  "approvedQuantity",
+  "preparedQuantity",
+  "shippedQuantity",
+] as const;
+
+export type CarriedFromField = (typeof CARRIED_FROM_FIELDS)[number];
+
+export interface QuantityPlan {
+  readonly field: LineQuantityField;
+  /** Tried in order; the first stage that recorded a figure wins. */
+  readonly from: readonly CarriedFromField[];
+}
+
+/**
+ * Every action in the preparation loop writes the same column, so it must read
+ * that column before falling back.
+ *
+ * `preparedQuantity` first is load-bearing. Five actions write it, and
+ * `PARTIALLY_AVAILABLE` and `LTN4_STOCK_OUT` both lead back into
+ * `IN_PREPARATION` — so unlike the other stages, this one routinely runs when
+ * its own column already holds a figure. Reading `approvedQuantity` first meant
+ * that declaring a partial and then marking the pallet ready silently restored
+ * the full approved quantity, erasing the shortfall LTN4 had just declared and
+ * the reason it gave for it.
+ */
+const PREPARATION_PLAN: QuantityPlan = {
+  field: "preparedQuantity",
+  from: ["preparedQuantity", "approvedQuantity", "requestedQuantity"],
+};
+
+export const QUANTITY_PLANS: Readonly<Partial<Record<TransitionAction, QuantityPlan>>> = {
+  approve: { field: "approvedQuantity", from: ["requestedQuantity"] },
+  startPreparation: PREPARATION_PLAN,
+  prepareAvailable: PREPARATION_PLAN,
+  resumePreparation: PREPARATION_PLAN,
+  declarePartial: PREPARATION_PLAN,
+  markReady: PREPARATION_PLAN,
+  ship: { field: "shippedQuantity", from: ["preparedQuantity", "approvedQuantity"] },
+  confirmReceipt: { field: "receivedQuantity", from: ["shippedQuantity", "preparedQuantity"] },
+};
+
+/**
+ * The quantity plan for an action, or `null` if it records none.
+ *
+ * A function rather than direct indexing so the UI has one thing to ask, and so
+ * `noUncheckedIndexedAccess` does not push an `undefined` check into every
+ * caller.
+ */
+export function quantityPlanFor(action: TransitionAction): QuantityPlan | null {
+  return QUANTITY_PLANS[action] ?? null;
+}

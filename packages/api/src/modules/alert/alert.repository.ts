@@ -121,10 +121,64 @@ export async function findParameterForClass(abcClass: AbcClass) {
   return db.replenishmentParameter.findUnique({ where: { abcClass } });
 }
 
+/** Every tracked stock item, with what a daily snapshot has to record. */
+export async function findSnapshotSubjects() {
+  return db.stockItem.findMany({
+    where: { article: { isActive: true } },
+    select: {
+      id: true,
+      currentStock: true,
+      minThreshold: true,
+      averageDailyConsumption: true,
+      alertLevel: true,
+    },
+  });
+}
+
+/** One day's alert state for one stock item, as the domain computed it. */
+export interface AlertSnapshotWrite {
+  readonly stockItemId: string;
+  readonly level: AlertLevel;
+  readonly currentStock: number;
+  readonly minThreshold: number;
+  readonly coverageDays: number | null;
+  readonly snapshotDate: Date;
+}
+
+/**
+ * Appends one day's snapshots, idempotently.
+ *
+ * `skipDuplicates` against the `@@unique([stockItemId, snapshotDate])` index is
+ * what makes the job safe to retry: the scheduler may fire twice after a
+ * network failure, and a KPI that moves when nothing happened is worse than one
+ * that is a day stale. The consequence is that the *first* run of a day wins —
+ * a second run does not correct the figures — which is the right trade for a
+ * daily series read as a trend.
+ *
+ * Chunked for the same reason the seed is: the pattern has to survive a
+ * catalogue ten times this size.
+ */
+export async function appendAlertSnapshots(writes: readonly AlertSnapshotWrite[]): Promise<number> {
+  const CHUNK_SIZE = 1_000;
+  let written = 0;
+
+  for (let offset = 0; offset < writes.length; offset += CHUNK_SIZE) {
+    const result = await db.stockAlertSnapshot.createMany({
+      data: [...writes.slice(offset, offset + CHUNK_SIZE)],
+      skipDuplicates: true,
+    });
+    written += result.count;
+  }
+
+  return written;
+}
+
 export const alertRepository = {
   findBoard,
   countByLevel,
   findParameterForClass,
+  findSnapshotSubjects,
+  appendAlertSnapshots,
 };
 
 export type AlertRepository = typeof alertRepository;

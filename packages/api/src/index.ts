@@ -7,4 +7,5 @@
  * service layer, which a lint rule forbids.
  */
 export { type Actor, type Context, type CreateContextOptions, createContext } from "./context";
+export { type NightlyResult, runNightlyMaintenance } from "./jobs/nightly";
 export { type AppRouter, appRouter, createCaller } from "./root";

@@ -22,6 +22,32 @@ function quantity(value: number | null): string {
 }
 
 /**
+ * A stage that recorded less than the one before it.
+ *
+ * Highlighted at every stage, not only at receipt: now that each step can
+ * record its own figure, a shortfall can appear as early as the approval. The
+ * gap is the whole reason these are five columns rather than one, so it has to
+ * be visible without subtracting two numbers by eye.
+ *
+ * `null` on either side is not a shortfall — it means the stage has not
+ * happened yet, which is what the dash says.
+ */
+function isShortfall(value: number | null, previous: number | null): boolean {
+  return value !== null && previous !== null && value < previous;
+}
+
+/** The cell props for a stage column, so the five read identically. */
+function stageCell(value: number | null, previous: number | null, previousLabel: string) {
+  const short = isShortfall(value, previous);
+
+  return {
+    className: short ? "font-medium text-status-critical" : undefined,
+    title: short ? `Inferieure a la quantite ${previousLabel}` : undefined,
+    children: quantity(value),
+  };
+}
+
+/**
  * The five quantity columns.
  *
  * Asked for, authorised, picked, shipped, received: five different facts, and
@@ -62,27 +88,18 @@ export function RequestLines({ lines }: RequestLinesProps) {
               <TableNumericCell className="font-medium">
                 {formatQuantity(line.requestedQuantity)}
               </TableNumericCell>
-              <TableNumericCell>{quantity(line.approvedQuantity)}</TableNumericCell>
-              <TableNumericCell>{quantity(line.preparedQuantity)}</TableNumericCell>
-              <TableNumericCell>{quantity(line.shippedQuantity)}</TableNumericCell>
               <TableNumericCell
-                className={
-                  line.receivedQuantity !== null &&
-                  line.shippedQuantity !== null &&
-                  line.receivedQuantity < line.shippedQuantity
-                    ? "font-medium text-status-critical"
-                    : undefined
-                }
-                title={
-                  line.receivedQuantity !== null &&
-                  line.shippedQuantity !== null &&
-                  line.receivedQuantity < line.shippedQuantity
-                    ? "Ecart entre la quantite expediee et la quantite recue"
-                    : undefined
-                }
-              >
-                {quantity(line.receivedQuantity)}
-              </TableNumericCell>
+                {...stageCell(line.approvedQuantity, line.requestedQuantity, "demandee")}
+              />
+              <TableNumericCell
+                {...stageCell(line.preparedQuantity, line.approvedQuantity, "validee")}
+              />
+              <TableNumericCell
+                {...stageCell(line.shippedQuantity, line.preparedQuantity, "preparee")}
+              />
+              <TableNumericCell
+                {...stageCell(line.receivedQuantity, line.shippedQuantity, "expediee")}
+              />
             </TableRow>
           ))}
         </TableBody>

@@ -39,6 +39,8 @@ function stubRepository(overrides: Partial<AlertRepository> = {}): AlertReposito
     countByLevel: notStubbed("countByLevel"),
     // No row written means the class defaults apply, which is the normal path.
     findParameterForClass: async () => null,
+    findSnapshotSubjects: notStubbed("findSnapshotSubjects"),
+    appendAlertSnapshots: notStubbed("appendAlertSnapshots"),
     ...overrides,
   };
 }
@@ -370,3 +372,90 @@ function parameterRow() {
     updatedAt: new Date("2026-01-01"),
   };
 }
+
+describe("daily alert snapshots (brief section 6.5)", () => {
+  const subject = (overrides: Record<string, unknown> = {}) => ({
+    id: "stock-1",
+    currentStock: 900,
+    minThreshold: new Prisma.Decimal(1_000),
+    averageDailyConsumption: new Prisma.Decimal(300),
+    alertLevel: "CRITICAL" as const,
+    ...overrides,
+  });
+
+  it("records the stored level rather than recomputing it", async () => {
+    // The level was written by the domain in the same transaction as the change
+    // that caused it. Recomputing here would let the snapshot disagree with the
+    // board it summarises.
+    const written: { level: string; currentStock: number }[] = [];
+
+    await service.captureDailySnapshots({
+      on: new Date("2026-09-01T14:32:00Z"),
+      repository: stubRepository({
+        findSnapshotSubjects: async () => [subject()],
+        appendAlertSnapshots: async (writes) => {
+          written.push(...writes.map((w) => ({ level: w.level, currentStock: w.currentStock })));
+          return writes.length;
+        },
+      }),
+    });
+
+    expect(written).toEqual([{ level: "CRITICAL", currentStock: 900 }]);
+  });
+
+  it("stamps midnight UTC, so one run per day collides with itself", async () => {
+    // The column is a `@db.Date` and the unique index is on
+    // (stockItemId, snapshotDate). A timestamp carrying the hour the job
+    // happened to run would defeat the idempotency that makes a retry safe.
+    let stamped: Date | undefined;
+
+    await service.captureDailySnapshots({
+      on: new Date("2026-09-01T14:32:17.123Z"),
+      repository: stubRepository({
+        findSnapshotSubjects: async () => [subject()],
+        appendAlertSnapshots: async (writes) => {
+          stamped = writes[0]?.snapshotDate;
+          return writes.length;
+        },
+      }),
+    });
+
+    expect(stamped?.toISOString()).toBe("2026-09-01T00:00:00.000Z");
+  });
+
+  it("computes coverage, and leaves it null for an article that never moves", async () => {
+    const written: (number | null)[] = [];
+
+    await service.captureDailySnapshots({
+      on: new Date("2026-09-01T00:00:00Z"),
+      repository: stubRepository({
+        findSnapshotSubjects: async () => [
+          subject({ currentStock: 900, averageDailyConsumption: new Prisma.Decimal(300) }),
+          subject({ id: "stock-2", averageDailyConsumption: new Prisma.Decimal(0) }),
+        ],
+        appendAlertSnapshots: async (writes) => {
+          written.push(...writes.map((w) => w.coverageDays));
+          return writes.length;
+        },
+      }),
+    });
+
+    // Three days of cover; then null rather than Infinity for an unconsumed
+    // reference, which is the invariant `daysOfCoverage` exists to hold.
+    expect(written).toEqual([3, null]);
+  });
+
+  it("reports how many rows were actually appended, not how many were offered", async () => {
+    // A second run on the same day writes nothing, and saying "60 snapshotted"
+    // when the index rejected all 60 would make a retry look like progress.
+    const result = await service.captureDailySnapshots({
+      on: new Date("2026-09-01T00:00:00Z"),
+      repository: stubRepository({
+        findSnapshotSubjects: async () => [subject(), subject({ id: "stock-2" })],
+        appendAlertSnapshots: async () => 0,
+      }),
+    });
+
+    expect(result).toEqual({ subjects: 2, written: 0 });
+  });
+});

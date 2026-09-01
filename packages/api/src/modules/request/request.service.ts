@@ -15,29 +15,37 @@ import type {
   TransitionResult,
   UpdateDraftInput,
 } from "@leoni/contracts";
-import { REQUEST_ACTION_LABELS_FR } from "@leoni/contracts";
+import { REQUEST_ACTION_LABELS_FR, REQUEST_STATUS_LABELS_FR } from "@leoni/contracts";
 import type {
   AbcClass,
+  AlertLevel,
+  CarriedFromField,
   NotificationType,
   RequestStatus,
   Role,
   TransitionAction,
 } from "@leoni/core";
 import {
+  allocateFifo,
   applyMovement,
   assertTransition,
+  assessLateness,
   BusinessRuleError,
   canAccessSite,
   computeOrderQuantity,
+  crossedIntoShortage,
   defaultParametersForClass,
   ForbiddenActionError,
   NotFoundError,
+  quantityPlanFor,
   resolveAlertLevel,
   transitionsFrom,
+  wouldGoNegative,
 } from "@leoni/core";
 
 import type { Actor } from "../../context";
 import { resolveSiteFilter } from "../../middlewares/site-scope";
+import { planShortageNotifications } from "../../shared/notification";
 import * as mapper from "./request.mapper";
 import type {
   CreateRequestLineWrite,
@@ -45,6 +53,7 @@ import type {
   NotificationWrite,
   RequestRepository,
   StockEntryWrite,
+  StockExitWrite,
 } from "./request.repository";
 import { requestRepository } from "./request.repository";
 
@@ -202,36 +211,6 @@ export async function create({
 
 // --- Planning: what a transition records ------------------------------------
 
-/**
- * The line column each action owns, and the column it carries forward from.
- *
- * An approval writes the authorised quantity, a shipment the shipped one. The
- * client names the action, never the column: a payload that chose the column
- * could write "received" while approving, which is how a service-level KPI
- * quietly becomes fiction.
- */
-const QUANTITY_PLAN: Partial<
-  Record<
-    TransitionAction,
-    { readonly field: LineQuantityWrite["field"]; readonly from: readonly LineField[] }
-  >
-> = {
-  approve: { field: "approvedQuantity", from: ["requestedQuantity"] },
-  startPreparation: { field: "preparedQuantity", from: ["approvedQuantity", "requestedQuantity"] },
-  prepareAvailable: { field: "preparedQuantity", from: ["approvedQuantity", "requestedQuantity"] },
-  resumePreparation: { field: "preparedQuantity", from: ["approvedQuantity", "requestedQuantity"] },
-  declarePartial: { field: "preparedQuantity", from: ["approvedQuantity", "requestedQuantity"] },
-  markReady: { field: "preparedQuantity", from: ["approvedQuantity", "requestedQuantity"] },
-  ship: { field: "shippedQuantity", from: ["preparedQuantity", "approvedQuantity"] },
-  confirmReceipt: { field: "receivedQuantity", from: ["shippedQuantity", "preparedQuantity"] },
-};
-
-type LineField =
-  | "requestedQuantity"
-  | "approvedQuantity"
-  | "preparedQuantity"
-  | "shippedQuantity";
-
 interface PlannableLine {
   readonly id: string;
   readonly requestedQuantity: number;
@@ -241,7 +220,7 @@ interface PlannableLine {
 }
 
 /** The first stage that actually recorded a figure, walking back the chain. */
-function carriedForward(line: PlannableLine, from: readonly LineField[]): number {
+function carriedForward(line: PlannableLine, from: readonly CarriedFromField[]): number {
   for (const field of from) {
     const value = line[field];
     if (value !== null) return value;
@@ -264,8 +243,11 @@ interface LineQuantityPlanInputs {
  * that number is the one the shortfall is computed from.
  */
 function planLineQuantities(inputs: LineQuantityPlanInputs): readonly LineQuantityWrite[] {
-  const plan = QUANTITY_PLAN[inputs.action];
-  if (plan === undefined) return [];
+  // The table lives in the domain, so the dialog that asks for these figures
+  // and the service that writes them cannot disagree about which stage owns
+  // which column.
+  const plan = quantityPlanFor(inputs.action);
+  if (plan === null) return [];
 
   const overrides = new Map(inputs.overrides.map((entry) => [entry.lineId, entry.quantity]));
 
@@ -362,6 +344,9 @@ export interface ReceiptPlanInputs {
  * decision and the repository may not make one — and written inside the same
  * transaction as the status change, because a receipt that raised a level
  * without a journal row is a figure nobody can explain.
+ *
+ * The other half of the transfer is `planDispatch`, which took the same goods
+ * off the supplying plant when they were shipped.
  */
 function planReceipt(inputs: ReceiptPlanInputs): readonly StockEntryWrite[] {
   const entries: StockEntryWrite[] = [];
@@ -382,7 +367,11 @@ function planReceipt(inputs: ReceiptPlanInputs): readonly StockEntryWrite[] {
 
     const newStock = applyMovement({
       currentStock: target.currentStock,
-      type: "ENTRY",
+      // The same arithmetic as an `ENTRY`, and a different fact: goods arriving
+      // against a request came from the other plant, not from outside. The
+      // journal row the repository writes says `TRANSFER_IN` for that reason,
+      // and naming the same type here keeps the two from drifting.
+      type: "TRANSFER_IN",
       quantity,
     });
 
@@ -397,6 +386,7 @@ function planReceipt(inputs: ReceiptPlanInputs): readonly StockEntryWrite[] {
       stockItemId: target.id,
       storageLocationId: locationId,
       quantity,
+      expectedCurrentStock: target.currentStock,
       newStock,
       alertLevel: resolveAlertLevel({
         currentStock: newStock,
@@ -407,6 +397,91 @@ function planReceipt(inputs: ReceiptPlanInputs): readonly StockEntryWrite[] {
   }
 
   return entries;
+}
+
+/** A stock item a dispatch draws from, as the repository returns it. */
+interface DispatchTarget {
+  readonly id: string;
+  readonly articleId: string;
+  readonly currentStock: number;
+  readonly minThreshold: { toNumber: () => number };
+  readonly alertLevel: AlertLevel;
+  readonly article: {
+    readonly abcClass: AbcClass;
+    readonly reference: string;
+    readonly designation: string;
+  };
+  readonly lots: readonly { readonly id: string; readonly quantity: number; readonly fifoDate: Date }[];
+}
+
+export interface DispatchPlanInputs {
+  readonly targets: readonly DispatchTarget[];
+  readonly warningMarginByClass: ReadonlyMap<AbcClass, number | null>;
+  readonly quantitiesByArticleId: ReadonlyMap<string, number>;
+}
+
+/**
+ * What a dispatch takes off the supplying plant.
+ *
+ * The mirror of `planReceipt`, and the half that was missing: a
+ * réapprovisionnement is a *transfer* (domain section 1), so crediting LTN1
+ * without debiting LTN4 created units from nothing on every request. LTN4's
+ * own alert board was computed from a stock level that never fell.
+ *
+ * Boxes leave oldest-first through `allocateFifo`, the same allocator the manual
+ * movement screen uses — a dispatch is a pick like any other, and two FIFO
+ * implementations would be two answers to "which box went".
+ */
+function planDispatch(inputs: DispatchPlanInputs): readonly StockExitWrite[] {
+  const exits: StockExitWrite[] = [];
+
+  for (const target of inputs.targets) {
+    const quantity = inputs.quantitiesByArticleId.get(target.articleId) ?? 0;
+    if (quantity <= 0) continue;
+
+    if (wouldGoNegative({ currentStock: target.currentStock, type: "TRANSFER_OUT", quantity })) {
+      // Refused rather than clamped: LTN4 shipping more than it holds is a
+      // declared shortage (`declarePartial`), not a stock level going negative.
+      throw new BusinessRuleError(
+        `Stock insuffisant a l expedition pour ${target.article.reference} : ` +
+          `${String(quantity)} unites a expedier, ${String(target.currentStock)} en stock.`,
+        { articleId: target.articleId, requested: quantity, available: target.currentStock },
+      );
+    }
+
+    const allocations = allocateFifo(target.lots, quantity);
+    const newStock = applyMovement({
+      currentStock: target.currentStock,
+      type: "TRANSFER_OUT",
+      quantity,
+    });
+
+    const configured = inputs.warningMarginByClass.get(target.article.abcClass);
+    const warningMarginRatio =
+      configured ?? defaultParametersForClass(target.article.abcClass).warningMarginRatio;
+
+    exits.push({
+      articleId: target.articleId,
+      movementId: crypto.randomUUID(),
+      stockItemId: target.id,
+      quantity,
+      expectedCurrentStock: target.currentStock,
+      newStock,
+      alertLevel: resolveAlertLevel({
+        currentStock: newStock,
+        min: target.minThreshold.toNumber(),
+        warningMarginRatio,
+      }),
+      lotDraws: allocations.map((allocation) => ({
+        lotId: allocation.lotId,
+        quantity: allocation.remaining,
+        expectedQuantity: allocation.remaining + allocation.quantity,
+      })),
+      drawnFromLotId: allocations[0]?.lotId ?? null,
+    });
+  }
+
+  return exits;
 }
 
 /**
@@ -567,6 +642,7 @@ interface TransitionPlan {
   readonly lineQuantities: readonly LineQuantityWrite[];
   readonly notifications: readonly NotificationWrite[];
   readonly stockEntries: readonly StockEntryWrite[];
+  readonly stockExits: readonly StockExitWrite[];
 }
 
 /**
@@ -612,6 +688,90 @@ interface BuildPlanInputs {
   readonly input: TransitionRequestInput;
 }
 
+/** The warning margin per class, which both plans need and neither may guess. */
+async function warningMarginByClass(
+  repository: RequestRepository,
+  classes: readonly AbcClass[],
+): Promise<ReadonlyMap<AbcClass, number | null>> {
+  const parameters = await Promise.all(
+    [...new Set(classes)].map(async (abcClass) => ({
+      abcClass,
+      row: await repository.findParameterForClass(abcClass),
+    })),
+  );
+
+  return new Map(
+    parameters.map(({ abcClass, row }) => [
+      abcClass,
+      row === null ? null : row.warningMarginRatio.toNumber(),
+    ]),
+  );
+}
+
+async function loadDispatchInputs(
+  repository: RequestRepository,
+  fromSiteId: string,
+  articleIds: readonly string[],
+): Promise<Omit<DispatchPlanInputs, "quantitiesByArticleId">> {
+  const targets = await repository.findDispatchTargets(articleIds, fromSiteId);
+
+  return {
+    targets,
+    warningMarginByClass: await warningMarginByClass(
+      repository,
+      targets.map((target) => target.article.abcClass),
+    ),
+  };
+}
+
+/**
+ * Shortage notifications for the plant a dispatch drew from.
+ *
+ * A dispatch can push the *supplying* plant below its own reorder point, and
+ * LTN4 learning that from the alert board hours later is the delay this project
+ * exists to remove.
+ *
+ * `crossedIntoShortage` in the domain owns what counts as news, so a dispatch, a
+ * manual movement and a nightly recalculation all agree. Recipients are resolved
+ * by site — "who works in the building this shelf is in" — and only once
+ * something has actually crossed: the overwhelmingly common shipment crosses
+ * nothing, and a query per shipment for an empty list is a query for nothing.
+ */
+async function planDispatchShortages(inputs: {
+  readonly repository: RequestRepository;
+  readonly fromSiteId: string;
+  readonly targets: readonly DispatchTarget[];
+  readonly exits: readonly StockExitWrite[];
+}): Promise<readonly NotificationWrite[]> {
+  const { repository, fromSiteId, targets, exits } = inputs;
+
+  const crossed = exits.flatMap((exit) => {
+    const target = targets.find((candidate) => candidate.articleId === exit.articleId);
+    if (target === undefined) return [];
+    if (!crossedIntoShortage(target.alertLevel, exit.alertLevel)) return [];
+    return [{ exit, target }];
+  });
+
+  if (crossed.length === 0) return [];
+
+  const recipients = await repository.findSiteRecipients(fromSiteId);
+
+  return crossed.flatMap(({ exit, target }) =>
+    planShortageNotifications({
+      from: target.alertLevel,
+      to: exit.alertLevel,
+      subject: {
+        articleId: exit.articleId,
+        reference: target.article.reference,
+        designation: target.article.designation,
+        newStock: exit.newStock,
+        minThreshold: target.minThreshold.toNumber(),
+      },
+      recipients,
+    }),
+  );
+}
+
 async function buildPlan(inputs: BuildPlanInputs): Promise<TransitionPlan> {
   const { repository, actor, request, transition, input } = inputs;
 
@@ -629,8 +789,12 @@ async function buildPlan(inputs: BuildPlanInputs): Promise<TransitionPlan> {
     findRecipients: (roles: readonly Role[]) => repository.findRecipients(roles),
   });
 
-  if (transition.action !== "confirmReceipt") {
-    return { lineQuantities, notifications, stockEntries: [] };
+  // Only two transitions move stock: goods leaving LTN4 and goods arriving at
+  // LTN1. Everything else is a status change with a trail.
+  const movesStock = transition.action === "confirmReceipt" || transition.action === "ship";
+
+  if (!movesStock) {
+    return { lineQuantities, notifications, stockEntries: [], stockExits: [] };
   }
 
   const quantitiesByArticleId = new Map(
@@ -640,16 +804,40 @@ async function buildPlan(inputs: BuildPlanInputs): Promise<TransitionPlan> {
     }),
   );
 
-  const receiptInputs = await loadReceiptInputs(
-    repository,
-    request.toSiteId,
-    [...quantitiesByArticleId.keys()],
-  );
+  const articleIds = [...quantitiesByArticleId.keys()];
+
+  if (transition.action === "ship") {
+    // Debited from the supplying plant — `fromSiteId`, which is LTN4.
+    const dispatchInputs = await loadDispatchInputs(repository, request.fromSiteId, articleIds);
+    const stockExits = planDispatch({ ...dispatchInputs, quantitiesByArticleId });
+
+    return {
+      lineQuantities,
+      // A dispatch can push the *supplying* plant below its own reorder point,
+      // and LTN4 finding that out from the alert board hours later is the gap
+      // this project exists to close. Appended to the transition's own
+      // notifications so both land in the one transaction.
+      notifications: [
+        ...notifications,
+        ...(await planDispatchShortages({
+          repository,
+          fromSiteId: request.fromSiteId,
+          targets: dispatchInputs.targets,
+          exits: stockExits,
+        })),
+      ],
+      stockEntries: [],
+      stockExits,
+    };
+  }
+
+  const receiptInputs = await loadReceiptInputs(repository, request.toSiteId, articleIds);
 
   return {
     lineQuantities,
     notifications,
     stockEntries: planReceipt({ ...receiptInputs, quantitiesByArticleId }),
+    stockExits: [],
   };
 }
 
@@ -709,6 +897,7 @@ export async function transition({
     lineQuantities: plan.lineQuantities,
     notifications: plan.notifications,
     stockEntries: plan.stockEntries,
+    stockExits: plan.stockExits,
   });
 
   return {
@@ -719,6 +908,12 @@ export async function transition({
       quantity: entry.quantity,
       newStock: entry.newStock,
       alertLevel: entry.alertLevel,
+    })),
+    stockExits: plan.stockExits.map((exit) => ({
+      articleId: exit.articleId,
+      quantity: exit.quantity,
+      newStock: exit.newStock,
+      alertLevel: exit.alertLevel,
     })),
   };
 }
@@ -862,3 +1057,67 @@ export async function comment({
   });
 }
 
+
+/**
+ * Warns about requests that have passed their promised delivery date.
+ *
+ * Called by the nightly job. This is *not* a retreat from ADR 0003 — lateness
+ * stays derived, and nothing here writes a status or stamps a row. What it adds
+ * is a nudge: `isLate` being always-correct on screen is only useful to somebody
+ * who happens to open the screen, and the process this replaces was an email
+ * chain precisely because nobody was watching.
+ *
+ * Announced once per request, not once per night. The repository excludes
+ * requests that already carry a `REQUEST_LATE` notification, because a late
+ * request stays late until it arrives and a nightly repeat is how a bell menu
+ * gets ignored.
+ *
+ * The requester is told, and so is whoever approved on their site's behalf: the
+ * storekeeper needs to chase it and the warehouse manager needs to know the
+ * commitment slipped.
+ */
+export async function notifyLateRequests({
+  asOf,
+  repository = requestRepository,
+}: {
+  /** Passed in rather than read here, so the sweep is deterministic to test. */
+  readonly asOf: Date;
+  readonly repository?: RequestRepository;
+}): Promise<{ readonly late: number; readonly notified: number }> {
+  const overdue = await repository.findRequestsBecomingLate(asOf);
+  if (overdue.length === 0) return { late: 0, notified: 0 };
+
+  const approvers = await repository.findRecipients(["LTN1_WAREHOUSE_MANAGER"]);
+
+  const writes = overdue.flatMap((request) => {
+    const lateness = assessLateness({
+      status: request.status,
+      expectedDeliveryAt: request.expectedDeliveryAt,
+      receivedAt: null,
+      now: asOf,
+    });
+
+    // Re-checked through the domain rather than trusted from the SQL: the
+    // `WHERE` clause narrows the rows, `assessLateness` decides what late means.
+    if (!lateness.isLate) return [];
+
+    const recipients = new Set([request.createdById, ...approvers]);
+
+    return [...recipients].map((userId) => ({
+      userId,
+      type: "REQUEST_LATE" as const,
+      title: `Demande en retard : ${request.code}`,
+      body:
+        `${String(lateness.daysLate)} jour(s) au-dela de la date de livraison annoncee. ` +
+        `Statut actuel : ${REQUEST_STATUS_LABELS_FR[request.status]}.`,
+      payload: {
+        requestId: request.id,
+        code: request.code,
+        status: request.status,
+        daysLate: lateness.daysLate,
+      },
+    }));
+  });
+
+  return { late: overdue.length, notified: await repository.recordNotifications(writes) };
+}

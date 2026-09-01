@@ -48,6 +48,10 @@ function stubRepository(overrides: Partial<ParameterRepository> = {}): Parameter
     upsertWithAudit: notStubbed("upsertWithAudit"),
     findRecalculationTargets: async () => [],
     findConsumptionSamples: async () => [],
+    // No consumption anywhere means no Pareto to compute, which is the default
+    // for every test that is not about the classification itself.
+    findConsumptionByArticle: async () => [],
+    applyAbcClasses: async () => undefined,
     applyThresholdWithHistory: async () => undefined,
     findRecalculationHistory: notStubbed("findRecalculationHistory"),
     ...overrides,
@@ -226,6 +230,231 @@ describe("parameter update", () => {
     const options = written.first();
     expect(options.audit.action).toBe("CREATE");
     expect(options.audit.before).toBeNull();
+  });
+
+  it("recomputes the class it just edited, so the change has an effect", async () => {
+    // `minThreshold` and `alertLevel` are stored columns derived from these
+    // numbers. Before this, editing them left every article in the class on its
+    // old figures until somebody remembered to press Recalculer — a parameter
+    // screen that silently did nothing.
+    const writes: { trigger: string; stockItemId: string }[] = [];
+
+    await service.update({
+      actor: actor(),
+      input: {
+        abcClass: "A",
+        safetyDays: 3,
+        extraCoverageDays: 4,
+        averagingWindowDays: 30,
+        warningMarginRatio: 0.2,
+      },
+      repository: stubRepository({
+        findParameters: async () => [parameterRow("A", 3, 4)],
+        upsertWithAudit: async () => undefined,
+        findRecalculationTargets: async () => [target({ abcClass: "A" })],
+        applyThresholdWithHistory: async (write) => {
+          writes.push({ trigger: write.trigger, stockItemId: write.stockItemId });
+        },
+      }),
+    });
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.trigger).toBe("PARAMETER_CHANGE");
+  });
+
+  it("recomputes only the class that was edited", async () => {
+    let seenClass: string | null = "unset";
+
+    await service.update({
+      actor: actor(),
+      input: {
+        abcClass: "C",
+        safetyDays: 1,
+        extraCoverageDays: 12,
+        averagingWindowDays: 90,
+        warningMarginRatio: 0.1,
+      },
+      repository: stubRepository({
+        upsertWithAudit: async () => undefined,
+        findRecalculationTargets: async (_siteId, abcClass) => {
+          seenClass = abcClass;
+          return [];
+        },
+      }),
+    });
+
+    expect(seenClass).toBe("C");
+  });
+});
+
+describe("ABC reclassification (brief section 5, assumption 3)", () => {
+  it("moves an article whose consumption puts it in another class", async () => {
+    // 80/15/5 over three articles: the first alone carries 80% of the volume.
+    const writes: { articleId: string; abcClass: string }[] = [];
+
+    await service.runRecalculation({
+      siteId: null,
+      abcClass: null,
+      trigger: "MANUAL",
+      actorId: "user-admin",
+      repository: stubRepository({
+        findConsumptionByArticle: async () => [
+          { articleId: "article-1", consumptionValue: 8_000 },
+          { articleId: "article-2", consumptionValue: 1_500 },
+          { articleId: "article-3", consumptionValue: 500 },
+        ],
+        // All three currently class C, so all three have somewhere to move.
+        findRecalculationTargets: async () => [
+          { ...target({ id: "stock-1" }), article: { ...target().article, id: "article-1", abcClass: "C" as const } },
+          { ...target({ id: "stock-2" }), article: { ...target().article, id: "article-2", abcClass: "C" as const } },
+          { ...target({ id: "stock-3" }), article: { ...target().article, id: "article-3", abcClass: "C" as const } },
+        ],
+        applyAbcClasses: async (pending) => {
+          writes.push(...pending.map((write) => ({ articleId: write.articleId, abcClass: write.abcClass })));
+        },
+      }),
+    });
+
+    expect(writes).toEqual([
+      { articleId: "article-1", abcClass: "A" },
+      { articleId: "article-2", abcClass: "B" },
+    ]);
+  });
+
+  it("writes nothing for an article already in the right class", async () => {
+    // Reasserting a class an article already holds would fill the audit log
+    // with non-events, and the run reports `reclassified: 0` honestly.
+    let called = 0;
+
+    const result = await service.runRecalculation({
+      siteId: null,
+      abcClass: null,
+      trigger: "SCHEDULED",
+      actorId: null,
+      repository: stubRepository({
+        findConsumptionByArticle: async () => [{ articleId: "article-1", consumptionValue: 100 }],
+        findRecalculationTargets: async () => [target({ abcClass: "A" })],
+        applyAbcClasses: async (pending) => {
+          called += pending.length;
+        },
+      }),
+    });
+
+    expect(called).toBe(0);
+    expect(result.reclassified).toBe(0);
+  });
+
+  it("audits a class change with both sides and the evidence", async () => {
+    const writes: { action: string; before: unknown; after: unknown; actorId: string | null }[] = [];
+
+    await service.runRecalculation({
+      siteId: null,
+      abcClass: null,
+      trigger: "SCHEDULED",
+      actorId: null,
+      repository: stubRepository({
+        findConsumptionByArticle: async () => [
+          { articleId: "article-1", consumptionValue: 9_000 },
+          { articleId: "article-2", consumptionValue: 1_000 },
+        ],
+        findRecalculationTargets: async () => [
+          { ...target({ id: "stock-1" }), article: { ...target().article, id: "article-1", abcClass: "C" as const } },
+          { ...target({ id: "stock-2" }), article: { ...target().article, id: "article-2", abcClass: "C" as const } },
+        ],
+        applyAbcClasses: async (pending) => {
+          writes.push(
+            ...pending.map((write) => ({
+              action: write.audit.action,
+              before: write.audit.before,
+              after: write.audit.after,
+              actorId: write.audit.actorId,
+            })),
+          );
+        },
+      }),
+    });
+
+    expect(writes[0]?.action).toBe("RECLASSIFY");
+    expect(writes[0]?.before).toEqual({ abcClass: "C" });
+    expect(writes[0]?.after).toMatchObject({ abcClass: "A", consumptionValue: 9_000 });
+    // The nightly job has no user behind it, and inventing one would put a
+    // person's name on a change nobody made.
+    expect(writes[0]?.actorId).toBeNull();
+  });
+
+  it("does not reclassify from a single class, which is not a population", async () => {
+    let called = 0;
+
+    await service.runRecalculation({
+      siteId: null,
+      abcClass: "A",
+      trigger: "PARAMETER_CHANGE",
+      actorId: "user-admin",
+      repository: stubRepository({
+        findConsumptionByArticle: async () => {
+          called += 1;
+          return [];
+        },
+        findRecalculationTargets: async () => [],
+      }),
+    });
+
+    expect(called).toBe(0);
+  });
+
+  it("does not let a site-scoped run move a cross-site attribute", async () => {
+    // `abcClass` is a column on Article, shared by both plants, and
+    // `threshold:recalculate` is held by the single-site LTN1 warehouse
+    // manager. Reclassifying from their run would give a site-scoped
+    // permission a global effect.
+    let called = 0;
+
+    await service.runRecalculation({
+      siteId: LTN1,
+      abcClass: null,
+      trigger: "MANUAL",
+      actorId: "user-1",
+      repository: stubRepository({
+        findConsumptionByArticle: async () => {
+          called += 1;
+          return [];
+        },
+        findRecalculationTargets: async () => [],
+      }),
+    });
+
+    expect(called).toBe(0);
+  });
+
+  it("reads the targets after reclassifying, so a moved article uses its new class", async () => {
+    // The ordering is the reason this is one pass rather than two: an article
+    // promoted to A must draw class A's safety days in the same run, not one
+    // run later.
+    const calls: string[] = [];
+
+    await service.runRecalculation({
+      siteId: null,
+      abcClass: null,
+      trigger: "SCHEDULED",
+      actorId: null,
+      repository: stubRepository({
+        findConsumptionByArticle: async () => {
+          calls.push("consumption");
+          return [{ articleId: "article-1", consumptionValue: 100 }];
+        },
+        findRecalculationTargets: async () => {
+          calls.push("targets");
+          return [target({ abcClass: "C" })];
+        },
+        applyAbcClasses: async () => {
+          calls.push("apply");
+        },
+      }),
+    });
+
+    // The classification's own read of the catalogue, then the write, then the
+    // read the thresholds are computed from.
+    expect(calls).toEqual(["consumption", "targets", "apply", "targets"]);
   });
 });
 
