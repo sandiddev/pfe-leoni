@@ -44,6 +44,45 @@ const config: NextConfig = {
 
   // Next 16 no longer runs ESLint during `next build`; linting is its own task
   // in the Turborepo pipeline (`pnpm lint`).
+
+  /**
+   * The headers that do not vary per request.
+   *
+   * The Content-Security-Policy is deliberately absent here and lives in
+   * `proxy.ts` instead: it carries a per-request nonce, which a static header
+   * cannot.
+   */
+  headers() {
+    // Next accepts a plain array here as well as a promise; there is nothing to
+    // await, and `async` with no `await` is a lie the linter rightly refuses.
+    return Promise.resolve([
+      {
+        source: "/:path*",
+        headers: [
+          // The application is served over HTTPS on the LEONI network; a
+          // downgrade is what a session cookie should never survive.
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000; includeSubDomains",
+          },
+          // A CSV export or an uploaded PDF must not be re-interpreted as
+          // something executable because a browser guessed at its content.
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          // Request codes and article references travel in paths; a full
+          // referrer would leak them to anything a user clicks through to.
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          // `frame-ancestors` in the CSP is what modern browsers enforce; this
+          // is for the ones that do not.
+          { key: "X-Frame-Options", value: "DENY" },
+          // Nothing here needs a camera, a microphone or a location.
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+          },
+        ],
+      },
+    ]);
+  },
 };
 
 export default config;

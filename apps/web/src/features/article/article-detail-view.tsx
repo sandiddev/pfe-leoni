@@ -170,6 +170,7 @@ export function ArticleDetailView({ article, canWrite }: ArticleDetailViewProps)
                   <TableRow>
                     <TableHead>Emplacement</TableHead>
                     <TableHead>Date d entree (FIFO)</TableHead>
+                    <TableHead>Lot fournisseur</TableHead>
                     <TableNumericHead>Quantite</TableNumericHead>
                   </TableRow>
                 </TableHeader>
@@ -179,6 +180,14 @@ export function ArticleDetailView({ article, canWrite }: ArticleDetailViewProps)
                       <TableCell className="font-medium">{lot.locationCode}</TableCell>
                       <TableCell className="text-foreground-muted">
                         {formatDate(lot.fifoDate)}
+                      </TableCell>
+                      {/* A dash, not an empty cell: stock counted before batch
+                          capture existed has none, and saying so is honest. */}
+                      <TableCell className="text-foreground-muted">
+                        {lot.batchReference ?? "—"}
+                        {lot.supplierReference !== null && (
+                          <span className="ml-2 text-xs">({lot.supplierReference})</span>
+                        )}
                       </TableCell>
                       <TableNumericCell>{formatQuantity(lot.quantity)}</TableNumericCell>
                     </TableRow>

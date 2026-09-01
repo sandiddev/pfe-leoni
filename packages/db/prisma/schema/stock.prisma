@@ -70,6 +70,17 @@ model StockLot {
   /// Entry date used for First-In-First-Out picking.
   fifoDate DateTime
 
+  /// Supplier batch this quantity came from.
+  ///
+  /// Optional because the seeded catalogue and any stock counted before this
+  /// column existed have none, and a required column would have forced an
+  /// invented value onto every historical lot. Automotive traceability asks
+  /// "which batch went into which harness", and a lot that cannot answer is
+  /// honest about not knowing rather than confidently wrong.
+  batchReference    String?
+  /// Who supplied it. Free text: there is no supplier master in this system.
+  supplierReference String?
+
   stockItemId String
   stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
 
@@ -85,6 +96,8 @@ model StockLot {
 
   @@index([stockItemId, fifoDate])
   @@index([storageLocationId])
+  /// "Where did batch X go" is a support question, and it must not be a scan.
+  @@index([batchReference])
   @@map("stock_lot")
 }
 

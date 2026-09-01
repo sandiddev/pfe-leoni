@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ABC_CLASSES,
   ALERT_LEVELS,
+  MEASUREMENT_UNITS,
   NOTIFICATION_TYPES,
   PERMISSIONS,
   REQUEST_STATUSES,
@@ -16,6 +17,8 @@ import {
 import {
   ABC_CLASS_LABELS_FR,
   ALERT_LEVEL_LABELS_FR,
+  MEASUREMENT_UNIT_LABELS_FR,
+  MEASUREMENT_UNIT_SYMBOLS_FR,
   NOTIFICATION_TYPE_LABELS_FR,
   PERMISSION_LABELS_FR,
   REQUEST_ACTION_LABELS_FR,
@@ -58,6 +61,15 @@ describe("French labels cover the whole domain", () => {
   it("labels every request status", () => {
     for (const status of REQUEST_STATUSES) {
       expectUsableLabel(REQUEST_STATUS_LABELS_FR[status], status);
+    }
+  });
+
+  it("labels and abbreviates every measurement unit", () => {
+    // Both maps, because a table shows the symbol and a form shows the word:
+    // a unit with only one of them is a unit that renders blank somewhere.
+    for (const unit of MEASUREMENT_UNITS) {
+      expectUsableLabel(MEASUREMENT_UNIT_LABELS_FR[unit], unit);
+      expectUsableLabel(MEASUREMENT_UNIT_SYMBOLS_FR[unit], unit);
     }
   });
 

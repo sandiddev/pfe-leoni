@@ -112,7 +112,11 @@ function buildWhere(options: FindManyOptions): Prisma.ReplenishmentRequestWhereI
       {
         OR: [
           { code: { contains: input.search, mode: "insensitive" } },
-          { lines: { some: { article: { reference: { contains: input.search, mode: "insensitive" } } } } },
+          {
+            lines: {
+              some: { article: { reference: { contains: input.search, mode: "insensitive" } } },
+            },
+          },
         ],
       },
     ];
@@ -168,7 +172,7 @@ export async function findSites() {
  * sense years later.
  */
 export async function findArticlesForRequest(articleIds: readonly string[], siteId: string) {
-  return db.stockItem.findMany({
+  const rows = await db.stockItem.findMany({
     where: { siteId, articleId: { in: [...articleIds] } },
     select: {
       currentStock: true,
@@ -177,6 +181,14 @@ export async function findArticlesForRequest(articleIds: readonly string[], site
       article: { select: { id: true, reference: true, vpe: true, abcClass: true } },
     },
   });
+
+  // Unwrapped here, not in the service: these feed `computeOrderQuantity` in
+  // `@leoni/core`, and the domain sees only `number` by design.
+  return rows.map((row) => ({
+    ...row,
+    minThreshold: row.minThreshold.toNumber(),
+    maxThreshold: row.maxThreshold.toNumber(),
+  }));
 }
 
 /**
@@ -527,7 +539,9 @@ function transferLegs(options: ApplyTransitionOptions): readonly TransferLeg[] {
  * status/trail pairing from the only thing that verifies it — while moving the
  * *field list* out changes nothing it looks at.
  */
-function historyData(options: ApplyTransitionOptions): Prisma.RequestStatusHistoryUncheckedCreateInput {
+function historyData(
+  options: ApplyTransitionOptions,
+): Prisma.RequestStatusHistoryUncheckedCreateInput {
   return {
     requestId: options.requestId,
     fromStatus: options.fromStatus,
@@ -579,9 +593,7 @@ function arrivalLotData(
  * separate method rather than a parameter on `applyTransition` — there is no
  * transition here to attach it to.
  */
-export async function recordNotifications(
-  writes: readonly NotificationWrite[],
-): Promise<number> {
+export async function recordNotifications(writes: readonly NotificationWrite[]): Promise<number> {
   if (writes.length === 0) return 0;
 
   const result = await db.notification.createMany({
@@ -683,7 +695,7 @@ export async function applyTransition(options: ApplyTransitionOptions): Promise<
  * this live" and "which boxes physically leave".
  */
 export async function findDispatchTargets(articleIds: readonly string[], siteId: string) {
-  return db.stockItem.findMany({
+  const rows = await db.stockItem.findMany({
     where: { siteId, articleId: { in: [...articleIds] } },
     select: {
       id: true,
@@ -699,6 +711,8 @@ export async function findDispatchTargets(articleIds: readonly string[], siteId:
       },
     },
   });
+
+  return rows.map((row) => ({ ...row, minThreshold: row.minThreshold.toNumber() }));
 }
 
 /**
@@ -708,7 +722,7 @@ export async function findDispatchTargets(articleIds: readonly string[], siteId:
  * would otherwise issue twenty round trips inside a user-facing mutation.
  */
 export async function findReceiptTargets(articleIds: readonly string[], siteId: string) {
-  return db.stockItem.findMany({
+  const rows = await db.stockItem.findMany({
     where: { siteId, articleId: { in: [...articleIds] } },
     select: {
       id: true,
@@ -723,6 +737,8 @@ export async function findReceiptTargets(articleIds: readonly string[], siteId: 
       },
     },
   });
+
+  return rows.map((row) => ({ ...row, minThreshold: row.minThreshold.toNumber() }));
 }
 
 /** Fallback shelf when an article has never been stored at this plant before. */
@@ -734,8 +750,11 @@ export async function findDefaultLocation(siteId: string) {
   });
 }
 
+/** The warning margin in force for a class, as a number the domain can use. */
 export async function findParameterForClass(abcClass: "A" | "B" | "C") {
-  return db.replenishmentParameter.findUnique({ where: { abcClass } });
+  const row = await db.replenishmentParameter.findUnique({ where: { abcClass } });
+
+  return row === null ? null : { warningMarginRatio: row.warningMarginRatio.toNumber() };
 }
 
 export async function findAttachments(requestId: string) {

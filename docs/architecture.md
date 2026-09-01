@@ -172,11 +172,31 @@ parameter row it came from will itself be edited; a reference would make the his
 
 ---
 
-## Scheduled recalculation
+## Scheduled maintenance
 
-Thresholds are recomputed daily (§3.5). The logic lives in the service layer and is invoked
-two ways: a tRPC mutation ("Recalculer") and a route handler guarded by `JOB_SECRET`, to be
-triggered by the host scheduler on the LEONI server. No external SaaS is involved (§6.2).
+`runRecalculation` in the parameter service is one pass reached four ways, distinguished only
+by the `RecalculationTrigger` it writes into `ThresholdHistory` — so "why did this threshold
+move" is answerable from the row itself:
+
+| Caller                       | Trigger            |
+| ---------------------------- | ------------------ |
+| the "Recalculer" button      | `MANUAL`           |
+| `POST /api/jobs/recalculate` | `SCHEDULED`        |
+| editing a class parameter    | `PARAMETER_CHANGE` |
+| a CSV catalogue import       | `IMPORT`           |
+
+An **unscoped** pass — no site filter and no class filter — also reclassifies articles by
+Pareto 80/15/5 (§5), before the thresholds, so an article promoted to class A draws class A's
+parameters in the same run. A site-scoped pass deliberately does not: `abcClass` is a column
+on `Article` shared by both plants, and `threshold:recalculate` is held by the single-site
+LTN1 warehouse manager.
+
+`runNightlyMaintenance` in `packages/api/src/jobs/nightly.ts` is what the scheduler calls,
+through a route handler guarded by `JOB_SECRET`. It recalculates, then appends one
+`StockAlertSnapshot` per article for the day (§6.5 — the rupture-rate trend is read from
+these), then warns about requests that have passed their promised delivery date. All three
+are idempotent: a retry after a network failure changes nothing. No external SaaS is involved
+(§6.2).
 
 ---
 

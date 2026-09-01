@@ -41,6 +41,15 @@ enum AbcClass {
   C
 }
 
+/// How an article is counted. A label only — quantities stay Int, so a
+/// fractional metre is not expressible. See MEASUREMENT_UNITS in @leoni/core.
+enum MeasurementUnit {
+  PIECE
+  METRE
+  KILOGRAM
+  LITRE
+}
+
 /// Every way stock can change. Each one writes a StockMovement row.
 enum MovementType {
   ENTRY

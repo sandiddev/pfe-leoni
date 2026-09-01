@@ -44,6 +44,7 @@ export function toBoardItem(options: ToBoardItemOptions): AlertBoardItem {
     reference: row.article.reference,
     designation: row.article.designation,
     abcClass: row.article.abcClass,
+    unit: row.article.unit,
     vpe: row.article.vpe,
     leadTimeDays: row.article.leadTimeDays,
     isActive: row.article.isActive,

@@ -62,10 +62,10 @@ function parameterRow(abcClass: "A" | "B" | "C", safetyDays = 2, extraCoverageDa
   return {
     id: `parameter-${abcClass}`,
     abcClass,
-    safetyDays: new Prisma.Decimal(safetyDays),
-    extraCoverageDays: new Prisma.Decimal(extraCoverageDays),
+    safetyDays,
+    extraCoverageDays,
     averagingWindowDays: 30,
-    warningMarginRatio: new Prisma.Decimal(0.2),
+    warningMarginRatio: 0.2,
     updatedAt: new Date("2026-02-01"),
   };
 }
@@ -97,22 +97,17 @@ function target(options: TargetOptions = {}) {
   return {
     id,
     currentStock,
-    minThreshold: new Prisma.Decimal(minThreshold),
-    maxThreshold: new Prisma.Decimal(maxThreshold),
-    safetyStock: new Prisma.Decimal(safetyStock),
+    minThreshold,
+    maxThreshold,
+    safetyStock,
     alertLevel,
     article: { id: "article-1", leadTimeDays, abcClass, parameter: options.override ?? null },
   };
 }
 
-/** A written article-level override, in the shape Prisma returns it. */
+/** A written article-level override, as the repository hands it over. */
 function override(safetyDays: number, extraCoverageDays: number) {
-  return {
-    safetyDays: new Prisma.Decimal(safetyDays),
-    extraCoverageDays: new Prisma.Decimal(extraCoverageDays),
-    averagingWindowDays: 30,
-    warningMarginRatio: new Prisma.Decimal(0.2),
-  };
+  return { safetyDays, extraCoverageDays, averagingWindowDays: 30, warningMarginRatio: 0.2 };
 }
 
 /** Thirty days of 500/day, so the average is exactly the brief's example. */
@@ -305,12 +300,23 @@ describe("ABC reclassification (brief section 5, assumption 3)", () => {
         ],
         // All three currently class C, so all three have somewhere to move.
         findRecalculationTargets: async () => [
-          { ...target({ id: "stock-1" }), article: { ...target().article, id: "article-1", abcClass: "C" as const } },
-          { ...target({ id: "stock-2" }), article: { ...target().article, id: "article-2", abcClass: "C" as const } },
-          { ...target({ id: "stock-3" }), article: { ...target().article, id: "article-3", abcClass: "C" as const } },
+          {
+            ...target({ id: "stock-1" }),
+            article: { ...target().article, id: "article-1", abcClass: "C" as const },
+          },
+          {
+            ...target({ id: "stock-2" }),
+            article: { ...target().article, id: "article-2", abcClass: "C" as const },
+          },
+          {
+            ...target({ id: "stock-3" }),
+            article: { ...target().article, id: "article-3", abcClass: "C" as const },
+          },
         ],
         applyAbcClasses: async (pending) => {
-          writes.push(...pending.map((write) => ({ articleId: write.articleId, abcClass: write.abcClass })));
+          writes.push(
+            ...pending.map((write) => ({ articleId: write.articleId, abcClass: write.abcClass })),
+          );
         },
       }),
     });
@@ -345,7 +351,8 @@ describe("ABC reclassification (brief section 5, assumption 3)", () => {
   });
 
   it("audits a class change with both sides and the evidence", async () => {
-    const writes: { action: string; before: unknown; after: unknown; actorId: string | null }[] = [];
+    const writes: { action: string; before: unknown; after: unknown; actorId: string | null }[] =
+      [];
 
     await service.runRecalculation({
       siteId: null,
@@ -358,8 +365,14 @@ describe("ABC reclassification (brief section 5, assumption 3)", () => {
           { articleId: "article-2", consumptionValue: 1_000 },
         ],
         findRecalculationTargets: async () => [
-          { ...target({ id: "stock-1" }), article: { ...target().article, id: "article-1", abcClass: "C" as const } },
-          { ...target({ id: "stock-2" }), article: { ...target().article, id: "article-2", abcClass: "C" as const } },
+          {
+            ...target({ id: "stock-1" }),
+            article: { ...target().article, id: "article-1", abcClass: "C" as const },
+          },
+          {
+            ...target({ id: "stock-2" }),
+            article: { ...target().article, id: "article-2", abcClass: "C" as const },
+          },
         ],
         applyAbcClasses: async (pending) => {
           writes.push(

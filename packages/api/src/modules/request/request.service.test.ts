@@ -8,7 +8,6 @@ import {
   TRANSITIONS,
 } from "@leoni/core";
 import type { RequestStatus, Role, TransitionAction } from "@leoni/core";
-import { Prisma } from "@leoni/db";
 
 import type { Actor } from "../../context";
 import type {
@@ -382,8 +381,7 @@ describe("request workflow - receipt writes stock", () => {
       actor: actor(),
       input: { requestId: "request-1", action: "confirmReceipt" },
       repository: stubRepository({
-        findById: async () =>
-          detail({ status: "SHIPPED", lines: [{ shippedQuantity: 400 }] }),
+        findById: async () => detail({ status: "SHIPPED", lines: [{ shippedQuantity: 400 }] }),
         findReceiptTargets: async () => [receiptTarget({ currentStock: 100 })],
         applyTransition: written.capture,
       }),
@@ -552,7 +550,9 @@ describe("request workflow - dispatch debits the supplying plant", () => {
       input: { requestId: "request-1", action: "ship" },
       repository: stubRepository({
         findById: async () => detail({ status: "READY", lines: [{ preparedQuantity: 4_700 }] }),
-        findDispatchTargets: async () => [dispatchTarget({ currentStock: 5_000, minThreshold: 400 })],
+        findDispatchTargets: async () => [
+          dispatchTarget({ currentStock: 5_000, minThreshold: 400 }),
+        ],
         applyTransition: written.capture,
       }),
     });
@@ -1003,7 +1003,7 @@ describe("request list and detail", () => {
     expect(found.comments[0]?.content).toBe("Urgent pour la ligne 3");
   });
 
-  it("falls back to \"create\" for a stored action the domain no longer knows", async () => {
+  it('falls back to "create" for a stored action the domain no longer knows', async () => {
     // The column is a plain string; narrowing here is what lets the screen
     // index the French label map without a cast.
     const found = await service.byId({
@@ -1264,7 +1264,10 @@ describe("attachments", () => {
       }),
     });
 
-    expect(items[0]).toMatchObject({ fileName: "bon-de-livraison.pdf", uploadedByName: "Magasinier" });
+    expect(items[0]).toMatchObject({
+      fileName: "bon-de-livraison.pdf",
+      uploadedByName: "Magasinier",
+    });
   });
 
   it("refuses to list attachments on another plant's request", async () => {
@@ -1413,7 +1416,7 @@ function dispatchTarget(options: DispatchTargetOptions = {}) {
     id: "stock-ltn4",
     articleId: "article-0",
     currentStock,
-    minThreshold: new Prisma.Decimal(minThreshold),
+    minThreshold,
     alertLevel,
     article: {
       abcClass: "A" as const,
@@ -1433,7 +1436,7 @@ function receiptTarget(options: ReceiptTargetOptions = {}) {
     id: "stock-1",
     articleId: "article-0",
     currentStock,
-    minThreshold: new Prisma.Decimal(minThreshold),
+    minThreshold,
     article: { abcClass: "A" as const },
     lots: locationId === null ? [] : [{ storageLocationId: locationId }],
   };
@@ -1442,8 +1445,8 @@ function receiptTarget(options: ReceiptTargetOptions = {}) {
 function articleForRequest() {
   return {
     currentStock: 1_200,
-    minThreshold: new Prisma.Decimal(1_500),
-    maxThreshold: new Prisma.Decimal(3_000),
+    minThreshold: 1_500,
+    maxThreshold: 3_000,
     article: { id: "article-1", reference: "REF-001", vpe: 500, abcClass: "A" as const },
   };
 }

@@ -69,6 +69,7 @@ function row(options: RowOptions = {}): StockItemRow {
       reference,
       designation: `Article ${reference}`,
       abcClass,
+      unit: "PIECE" as const,
       vpe: 100,
       leadTimeDays: 2,
       isActive: true,
@@ -77,14 +78,9 @@ function row(options: RowOptions = {}): StockItemRow {
   };
 }
 
-/** A written article-level override, in the shape Prisma returns it. */
+/** A written article-level override, as the repository hands it over. */
 function override(safetyDays: number, extraCoverageDays: number) {
-  return {
-    safetyDays: new Prisma.Decimal(safetyDays),
-    extraCoverageDays: new Prisma.Decimal(extraCoverageDays),
-    averagingWindowDays: 30,
-    warningMarginRatio: new Prisma.Decimal(0.2),
-  };
+  return { safetyDays, extraCoverageDays, averagingWindowDays: 30, warningMarginRatio: 0.2 };
 }
 
 /**
@@ -218,12 +214,16 @@ describe("article service — the detail screen", () => {
             quantity: 400,
             fifoDate: new Date("2026-01-01"),
             storageLocation: { code: "A-01" },
+            batchReference: null,
+            supplierReference: null,
           },
           {
             id: "lot-new",
             quantity: 600,
             fifoDate: new Date("2026-06-01"),
             storageLocation: { code: "A-02" },
+            batchReference: null,
+            supplierReference: null,
           },
         ],
         findRecentMovements: async () => [
@@ -401,16 +401,11 @@ describe("article service — parameters", () => {
           totalCount: 1,
         }),
         findParameterForClass: async () => ({
-          id: "param-a",
-          abcClass: "A",
-          articleId: null,
           // Far wider than the class-A default of 2 / 3 days.
-          safetyDays: new Prisma.Decimal(10),
-          extraCoverageDays: new Prisma.Decimal(20),
+          safetyDays: 10,
+          extraCoverageDays: 20,
           averagingWindowDays: 30,
-          warningMarginRatio: new Prisma.Decimal(0.2),
-          createdAt: new Date("2026-01-01"),
-          updatedAt: new Date("2026-01-01"),
+          warningMarginRatio: 0.2,
         }),
       }),
     });
@@ -443,6 +438,7 @@ describe("article service — parameters", () => {
 describe("article service — update", () => {
   const existing = {
     designation: "Ancienne designation",
+    unit: "PIECE" as const,
     vpe: 100,
     leadTimeDays: 2,
     abcClass: "A" as const,
@@ -452,6 +448,7 @@ describe("article service — update", () => {
   const input = {
     articleId: "article-1",
     designation: "Nouvelle designation",
+    unit: "PIECE" as const,
     vpe: 100,
     leadTimeDays: 2,
     abcClass: "A" as const,
@@ -557,7 +554,6 @@ describe("article service — update", () => {
   });
 });
 
-
 describe("article parameters", () => {
   it("prefers an article's own parameters over its class default", async () => {
     const page = await service.list({
@@ -607,6 +603,7 @@ describe("article creation", () => {
   const input = {
     reference: "REF-NEW",
     designation: "Connecteur 4 voies",
+    unit: "PIECE" as const,
     vpe: 250,
     leadTimeDays: 3,
     abcClass: "B",
@@ -681,7 +678,8 @@ describe("article creation", () => {
 });
 
 describe("CSV catalogue import (brief section 6.1)", () => {
-  const HEADER = "reference,designation,vpe,leadTimeDays,abcClass,initialStock,siteCode";
+  const HEADER =
+    "reference,designation,unit,vpe,leadTimeDays,abcClass,initialStock,siteCode";
 
   /**
    * The recalculation, stubbed out.
@@ -696,7 +694,7 @@ describe("CSV catalogue import (brief section 6.1)", () => {
     reclassified: 0,
     runAt: new Date("2026-09-01"),
   });
-  const VALID = `${HEADER}\nBTR-1,Boitier 12 voies,250,2,A,1000,LTN1`;
+  const VALID = `${HEADER}\nBTR-1,Boitier 12 voies,PIECE,250,2,A,1000,LTN1`;
 
   /** Captures whether anything was written at all. */
   function captureWrites() {
@@ -742,9 +740,7 @@ describe("CSV catalogue import (brief section 6.1)", () => {
     const result = await service.importFromCsv({
       actor: actor(),
       content:
-        `${HEADER}\n` +
-        `BTR-1,Boitier 12 voies,250,2,A,1000,LTN1\n` +
-        `BTR-2,Cosse,0,2,A,0,LTN1\n`,
+        `${HEADER}\n` + `BTR-1,Boitier 12 voies,PIECE,250,2,A,1000,LTN1\n` + `BTR-2,Cosse,PIECE,0,2,A,0,LTN1\n`,
       recalculate: noRecalculation,
       repository: stubRepository({
         findAllSites: async () => [{ id: "site-ltn1" }],
@@ -764,7 +760,7 @@ describe("CSV catalogue import (brief section 6.1)", () => {
     // technically correct and practically useless.
     const result = await service.importFromCsv({
       actor: actor(),
-      content: `${HEADER}\nBTR-1,Boitier,250,2,Z,0,LTN1`,
+      content: `${HEADER}\nBTR-1,Boitier,PIECE,250,2,Z,0,LTN1`,
       recalculate: noRecalculation,
       repository: stubRepository(),
     });
@@ -781,6 +777,7 @@ describe("CSV catalogue import (brief section 6.1)", () => {
     });
 
     expect(result.errors.map((error) => error.column)).toEqual([
+      "unit",
       "vpe",
       "leadTimeDays",
       "abcClass",
@@ -795,7 +792,7 @@ describe("CSV catalogue import (brief section 6.1)", () => {
     // first, which is exactly the partial write this import forbids.
     const result = await service.importFromCsv({
       actor: actor(),
-      content: `${HEADER}\nBTR-1,Boitier,250,2,A,0,LTN1\nBTR-1,Boitier bis,250,2,A,0,LTN1`,
+      content: `${HEADER}\nBTR-1,Boitier,PIECE,250,2,A,0,LTN1\nBTR-1,Boitier bis,PIECE,250,2,A,0,LTN1`,
       recalculate: noRecalculation,
       repository: stubRepository(),
     });
@@ -807,7 +804,7 @@ describe("CSV catalogue import (brief section 6.1)", () => {
   it("refuses a site code this installation does not have", async () => {
     const result = await service.importFromCsv({
       actor: actor(),
-      content: `${HEADER}\nBTR-1,Boitier,250,2,A,0,LTN9`,
+      content: `${HEADER}\nBTR-1,Boitier,PIECE,250,2,A,0,LTN9`,
       recalculate: noRecalculation,
       repository: stubRepository(),
     });
@@ -830,6 +827,7 @@ describe("CSV catalogue import (brief section 6.1)", () => {
             id: "article-1",
             reference: "BTR-1",
             designation: "Ancien libelle",
+            unit: "PIECE" as const,
             vpe: 100,
             leadTimeDays: 5,
             abcClass: "C" as const,
@@ -851,7 +849,7 @@ describe("CSV catalogue import (brief section 6.1)", () => {
 
     await service.importFromCsv({
       actor: actor(),
-      content: `${HEADER}\nbtr-1,Boitier,250,2,a,0,ltn1`,
+      content: `${HEADER}\nbtr-1,Boitier,piece,250,2,a,0,ltn1`,
       recalculate: noRecalculation,
       repository: stubRepository({
         findAllSites: async () => [{ id: "site-ltn1" }],
@@ -867,7 +865,7 @@ describe("CSV catalogue import (brief section 6.1)", () => {
 
     await service.importFromCsv({
       actor: actor(),
-      content: `${HEADER}\nBTR-1,Boitier,250,2,A,1000,LTN4`,
+      content: `${HEADER}\nBTR-1,Boitier,PIECE,250,2,A,1000,LTN4`,
       recalculate: noRecalculation,
       repository: stubRepository({
         findAllSites: async () => [{ id: "site-ltn1" }, { id: "site-ltn4" }],

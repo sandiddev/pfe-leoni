@@ -70,6 +70,7 @@ export function toListItem(options: ToListItemOptions): ArticleListItem {
     reference: row.article.reference,
     designation: row.article.designation,
     abcClass: row.article.abcClass,
+    unit: row.article.unit,
     vpe: row.article.vpe,
     leadTimeDays: row.article.leadTimeDays,
     isActive: row.article.isActive,
@@ -104,6 +105,8 @@ interface LotRow {
   quantity: number;
   fifoDate: Date;
   storageLocation: { code: string };
+  batchReference: string | null;
+  supplierReference: string | null;
 }
 
 export function toLotItem(row: LotRow): StockLotItem {
@@ -112,6 +115,8 @@ export function toLotItem(row: LotRow): StockLotItem {
     quantity: row.quantity,
     fifoDate: row.fifoDate,
     locationCode: row.storageLocation.code,
+    batchReference: row.batchReference,
+    supplierReference: row.supplierReference,
   };
 }
 

@@ -3,7 +3,7 @@
 import { MoreHorizontal, Pencil } from "lucide-react";
 import Link from "next/link";
 
-import type { ArticleListItem } from "@leoni/contracts";
+import { type ArticleListItem, MEASUREMENT_UNIT_SYMBOLS_FR } from "@leoni/contracts";
 import {
   AlertLevelBadge,
   Badge,
@@ -60,7 +60,15 @@ export function ArticleRows({ items, canWrite, onEdit }: ArticleRowsProps) {
           <TableCell>
             <AlertLevelBadge level={item.alertLevel} />
           </TableCell>
-          <TableNumericCell>{formatQuantity(item.currentStock)}</TableNumericCell>
+          {/* The unit sits with the stock figure rather than in a column of its
+              own: it qualifies a quantity, and a reader scanning the stock
+              column should not have to look sideways to know what 1 200 is. */}
+          <TableNumericCell>
+            {formatQuantity(item.currentStock)}
+            <span className="ml-1 text-xs text-foreground-muted">
+              {MEASUREMENT_UNIT_SYMBOLS_FR[item.unit]}
+            </span>
+          </TableNumericCell>
           <TableNumericCell className="text-foreground-muted">
             {formatQuantity(item.minThreshold)}
           </TableNumericCell>

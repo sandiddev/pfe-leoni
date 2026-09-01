@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import { BusinessRuleError, NotFoundError } from "@leoni/core";
-import { Prisma } from "@leoni/db";
 
 import type { Actor } from "../../context";
 import type {
@@ -79,7 +78,7 @@ function stockItem(options: StockItemOptions = {}) {
   return {
     id: "stock-1",
     currentStock,
-    minThreshold: new Prisma.Decimal(minThreshold),
+    minThreshold,
     siteId,
     alertLevel,
     article: {
@@ -125,7 +124,9 @@ describe("stock service - journal", () => {
   });
 
   it("keeps the extra pagination row out of the page and returns it as a cursor", async () => {
-    const rows = Array.from({ length: 3 }, (_unused, index) => movementRow(`movement-${String(index)}`));
+    const rows = Array.from({ length: 3 }, (_unused, index) =>
+      movementRow(`movement-${String(index)}`),
+    );
 
     const page = await service.list({
       actor: actor(),
@@ -297,6 +298,10 @@ describe("stock service - recording a movement", () => {
         storageLocationId: "loc-1",
         quantity: 500,
         fifoDate: new Date("2026-03-01"),
+        // Null rather than absent: this entry recorded no batch, and the lot
+        // says so instead of inheriting one from somewhere.
+        batchReference: null,
+        supplierReference: null,
       },
     ]);
     expect(options.newLotId).not.toBeNull();
@@ -506,17 +511,19 @@ function captureWrite() {
   };
 }
 
+/**
+ * The class parameters as the repository now hands them over.
+ *
+ * Plain numbers, and no `Prisma.Decimal` in sight — which is the point of
+ * moving the conversion down: a service fixture that needs the Prisma runtime
+ * to exist is not the "plain object stub, no Postgres" seam CLAUDE.md promises.
+ */
 function parameterRow(warningMarginRatio: number) {
   return {
-    id: "parameter-a",
-    abcClass: "A" as const,
-    articleId: null,
-    safetyDays: new Prisma.Decimal(2),
-    extraCoverageDays: new Prisma.Decimal(3),
+    safetyDays: 2,
+    extraCoverageDays: 3,
     averagingWindowDays: 30,
-    warningMarginRatio: new Prisma.Decimal(warningMarginRatio),
-    createdAt: new Date("2026-01-01"),
-    updatedAt: new Date("2026-01-01"),
+    warningMarginRatio,
   };
 }
 
@@ -636,5 +643,57 @@ describe("stock service - shortage notifications", () => {
 
     expect(written.count()).toBe(1);
     expect(written.options().notifications.length).toBeGreaterThan(0);
+  });
+});
+
+describe("stock service - batch traceability", () => {
+  it("carries the batch onto the lot an inbound movement creates", async () => {
+    const written = captureWrite();
+
+    await service.record({
+      actor: actor(),
+      input: {
+        articleId: "article-1",
+        type: "ENTRY",
+        quantity: 500,
+        storageLocationId: "loc-1",
+        batchReference: "LOT-2026-014",
+        supplierReference: "TE Connectivity",
+      },
+      repository: stubRepository({
+        findStockItemForMovement: async () => stockItem(),
+        findStorageLocationById: async () => LOCATION,
+        recordMovementWithStockUpdate: written.capture,
+      }),
+    });
+
+    expect(written.options().lotWrites[0]).toMatchObject({
+      kind: "create",
+      batchReference: "LOT-2026-014",
+      supplierReference: "TE Connectivity",
+    });
+  });
+
+  it("ignores a batch on an outbound movement", async () => {
+    // A batch is a property of stock arriving. FIFO decides which batches
+    // leave, so accepting one here would let a picker claim a lot they did not
+    // draw from.
+    const written = captureWrite();
+
+    await service.record({
+      actor: actor(),
+      input: {
+        articleId: "article-1",
+        type: "EXIT",
+        quantity: 100,
+        batchReference: "LOT-INVENTE",
+      },
+      repository: stubRepository({
+        findStockItemForMovement: async () => stockItem(),
+        recordMovementWithStockUpdate: written.capture,
+      }),
+    });
+
+    expect(written.options().lotWrites.every((write) => write.kind === "draw")).toBe(true);
   });
 });

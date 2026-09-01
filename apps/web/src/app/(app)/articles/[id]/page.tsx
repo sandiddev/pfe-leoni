@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import {
+  MEASUREMENT_UNIT_LABELS_FR,
+  MEASUREMENT_UNIT_SYMBOLS_FR,
+} from "@leoni/contracts";
 import { can } from "@leoni/core";
 import { PageHeader } from "@leoni/ui";
 import { ArticleDetailView } from "~/features/article/article-detail-view";
@@ -33,7 +37,12 @@ export default async function ArticleDetailPage({ params }: PageProps) {
     <div className="space-y-5">
       <PageHeader
         title={`${article.reference} — ${article.designation}`}
-        description={`Site ${article.siteCode} · classe ${article.abcClass} · VPE ${String(article.vpe)} · delai ${String(article.leadTimeDays)} j`}
+        description={
+          `Site ${article.siteCode} · classe ${article.abcClass} · ` +
+          `unite ${MEASUREMENT_UNIT_LABELS_FR[article.unit].toLowerCase()} · ` +
+          `VPE ${String(article.vpe)} ${MEASUREMENT_UNIT_SYMBOLS_FR[article.unit]} · ` +
+          `delai ${String(article.leadTimeDays)} j`
+        }
       />
 
       <ArticleDetailView article={article} canWrite={can(actor.role, "article:write")} />

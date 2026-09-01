@@ -1,6 +1,7 @@
 "use client";
 
-import { LogOut } from "lucide-react";
+import { LogOut, UserRound } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { authClient } from "@leoni/auth/client";
@@ -80,6 +81,21 @@ export function AppTopbar({ userName, email, role }: AppTopbarProps) {
             </DropdownMenuLabel>
 
             <ThemeToggle />
+
+            <DropdownMenuSeparator />
+            {/*
+              In the user menu rather than the sidebar: the sidebar lists the
+              work, and every entry there is gated by a permission. "My account"
+              is gated by nothing — it is about whoever is signed in — so putting
+              it here keeps `NavigationItem.permission` required, which is what
+              makes a missing link impossible to mistake for a security control.
+            */}
+            <DropdownMenuItem asChild>
+              <Link href="/mon-compte">
+                <UserRound />
+                Mon compte
+              </Link>
+            </DropdownMenuItem>
 
             <DropdownMenuSeparator />
             <DropdownMenuItem

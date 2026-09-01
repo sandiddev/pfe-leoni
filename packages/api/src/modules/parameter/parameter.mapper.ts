@@ -18,10 +18,10 @@ type ParameterRow = Awaited<ReturnType<typeof parameterRepository.findParameters
 export function toParameterItem(row: ParameterRow, abcClass: AbcClass): ParameterItem {
   return {
     abcClass,
-    safetyDays: row.safetyDays.toNumber(),
-    extraCoverageDays: row.extraCoverageDays.toNumber(),
+    safetyDays: row.safetyDays,
+    extraCoverageDays: row.extraCoverageDays,
     averagingWindowDays: row.averagingWindowDays,
-    warningMarginRatio: row.warningMarginRatio.toNumber(),
+    warningMarginRatio: row.warningMarginRatio,
     isDefault: false,
     updatedAt: row.updatedAt,
   };

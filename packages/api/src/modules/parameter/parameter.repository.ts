@@ -14,8 +14,16 @@ import type { AuditEntry } from "../../shared/audit";
  * the history lie the moment someone edits a default.
  */
 
+/**
+ * The written class parameters, with `Decimal` already unwrapped.
+ *
+ * Converted here rather than in the service or the mapper, because both consume
+ * them: the service feeds them to `@leoni/core` and the mapper renders them.
+ * One conversion at the boundary means neither has to know that Postgres stores
+ * these as `numeric(12,3)`.
+ */
 export async function findParameters() {
-  return db.replenishmentParameter.findMany({
+  const rows = await db.replenishmentParameter.findMany({
     where: { abcClass: { not: null } },
     select: {
       id: true,
@@ -28,6 +36,13 @@ export async function findParameters() {
     },
     orderBy: { abcClass: "asc" },
   });
+
+  return rows.map((row) => ({
+    ...row,
+    safetyDays: row.safetyDays.toNumber(),
+    extraCoverageDays: row.extraCoverageDays.toNumber(),
+    warningMarginRatio: row.warningMarginRatio.toNumber(),
+  }));
 }
 
 export interface ParameterData {
@@ -81,7 +96,7 @@ export async function upsertWithAudit(options: UpsertParameterOptions): Promise<
  * never both, and both columns are unique — so this is a single-row lookup.
  */
 export async function findParameterForArticle(articleId: string) {
-  return db.replenishmentParameter.findUnique({
+  const row = await db.replenishmentParameter.findUnique({
     where: { articleId },
     select: {
       id: true,
@@ -92,6 +107,15 @@ export async function findParameterForArticle(articleId: string) {
       updatedAt: true,
     },
   });
+
+  return row === null
+    ? null
+    : {
+        ...row,
+        safetyDays: row.safetyDays.toNumber(),
+        extraCoverageDays: row.extraCoverageDays.toNumber(),
+        warningMarginRatio: row.warningMarginRatio.toNumber(),
+      };
 }
 
 export async function findArticleForOverride(articleId: string) {
@@ -146,7 +170,7 @@ function auditData(audit: AuditEntry): Prisma.AuditLogUncheckedCreateInput {
 
 /** Every stock item a recalculation run covers, with what it needs to compute. */
 export async function findRecalculationTargets(siteId: string | null, abcClass: AbcClass | null) {
-  return db.stockItem.findMany({
+  const rows = await db.stockItem.findMany({
     where: {
       article: { isActive: true, ...(abcClass === null ? {} : { abcClass }) },
       ...(siteId === null ? {} : { siteId }),
@@ -179,6 +203,25 @@ export async function findRecalculationTargets(siteId: string | null, abcClass: 
       },
     },
   });
+
+  return rows.map((row) => ({
+    ...row,
+    minThreshold: row.minThreshold.toNumber(),
+    maxThreshold: row.maxThreshold.toNumber(),
+    safetyStock: row.safetyStock.toNumber(),
+    article: {
+      ...row.article,
+      parameter:
+        row.article.parameter === null
+          ? null
+          : {
+              safetyDays: row.article.parameter.safetyDays.toNumber(),
+              extraCoverageDays: row.article.parameter.extraCoverageDays.toNumber(),
+              averagingWindowDays: row.article.parameter.averagingWindowDays,
+              warningMarginRatio: row.article.parameter.warningMarginRatio.toNumber(),
+            },
+    },
+  }));
 }
 
 /**

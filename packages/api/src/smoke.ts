@@ -47,6 +47,10 @@ async function callerFor(email: string) {
 }
 
 async function main(): Promise<void> {
+  // One suffix for every reference this run invents, so a re-run collides with
+  // nothing it created last time.
+  const stamp = String(Date.now()).slice(-6);
+
   const magasinier = await callerFor("magasinier.ltn1@leoni.tn");
   const responsableLtn1 = await callerFor("responsable.ltn1@leoni.tn");
   const responsableLtn4 = await callerFor("responsable.ltn4@leoni.tn");
@@ -71,11 +75,18 @@ async function main(): Promise<void> {
   check("stock: per-location view", byLocation.length > 0);
 
   const requests = await magasinier.request.list({ limit: 25, onlyMine: false, onlyLate: false });
-  check("demandes: list returns rows", requests.items.length > 0, `(${String(requests.totalCount)})`);
+  check(
+    "demandes: list returns rows",
+    requests.items.length > 0,
+    `(${String(requests.totalCount)})`,
+  );
 
   const dashboard = await logistique.dashboard.summary({ days: 90 });
-  check("dashboard: stock-out history built", dashboard.stockOutHistory.length > 0,
-    `(${String(dashboard.stockOutHistory.length)} days)`);
+  check(
+    "dashboard: stock-out history built",
+    dashboard.stockOutHistory.length > 0,
+    `(${String(dashboard.stockOutHistory.length)} days)`,
+  );
   check("dashboard: every status listed", dashboard.requestsByStatus.length === 14);
   console.log(
     `       service level ${String(dashboard.serviceLevel.rate)}% · ` +
@@ -142,6 +153,45 @@ async function main(): Promise<void> {
     refused = true;
   }
   check("an exit larger than the stock is refused", refused);
+
+  console.log("\nBATCH TRACEABILITY");
+  const batchTarget = await db.stockItem.findFirstOrThrow({
+    where: { siteId: (await db.site.findFirstOrThrow({ where: { code: "LTN1" } })).id },
+    select: { articleId: true },
+  });
+  const batchLocation = await magasinier.stock.locations({});
+
+  const withBatch = await magasinier.stock.record({
+    articleId: batchTarget.articleId,
+    type: "ENTRY",
+    quantity: 10,
+    storageLocationId: batchLocation[0]?.id ?? "",
+    batchReference: `LOT-SMOKE-${stamp}`,
+    supplierReference: "TE Connectivity",
+  });
+
+  const createdLot = await db.stockLot.findFirstOrThrow({
+    where: { batchReference: `LOT-SMOKE-${stamp}` },
+    select: { batchReference: true, supplierReference: true, quantity: true },
+  });
+  check(
+    "an inbound movement records the supplier batch on the lot it creates",
+    createdLot.supplierReference === "TE Connectivity" && createdLot.quantity === 10,
+    JSON.stringify(createdLot),
+  );
+  check("and the movement itself succeeded", withBatch.newStock > 0);
+
+  // A batch is a property of stock arriving; FIFO decides which leave.
+  await magasinier.stock.record({
+    articleId: batchTarget.articleId,
+    type: "EXIT",
+    quantity: 5,
+    batchReference: "LOT-QUE-PERSONNE-NA-RECU",
+  });
+  check(
+    "an outbound movement invents no lot for a batch it was handed",
+    (await db.stockLot.count({ where: { batchReference: "LOT-QUE-PERSONNE-NA-RECU" } })) === 0,
+  );
 
   console.log("\nWORKFLOW, END TO END");
   const created = await magasinier.request.create({
@@ -236,8 +286,11 @@ async function main(): Promise<void> {
   );
 
   const detail = await magasinier.request.byId({ requestId: created.requestId });
-  check("trail has one row per transition plus creation", detail.history.length === 9,
-    `(${String(detail.history.length)})`);
+  check(
+    "trail has one row per transition plus creation",
+    detail.history.length === 9,
+    `(${String(detail.history.length)})`,
+  );
   check("no action left from a closed request", detail.availableActions.length === 0);
   check(
     "the five quantity columns are all filled",
@@ -298,10 +351,11 @@ async function main(): Promise<void> {
   });
 
   const declared = await magasinier.request.byId({ requestId: partial.requestId });
-  check("a declared shortage carries the quantity it can actually supply",
-    declared.status === "PARTIALLY_AVAILABLE" &&
-      declared.lines[0]?.preparedQuantity === pack * 2,
-    `(${String(declared.lines[0]?.preparedQuantity)} of ${String(pack * 3)} approved)`);
+  check(
+    "a declared shortage carries the quantity it can actually supply",
+    declared.status === "PARTIALLY_AVAILABLE" && declared.lines[0]?.preparedQuantity === pack * 2,
+    `(${String(declared.lines[0]?.preparedQuantity)} of ${String(pack * 3)} approved)`,
+  );
 
   await responsableLtn4.request.transition({ requestId: partial.requestId, action: "markReady" });
   await responsableLtn4.request.transition({
@@ -334,7 +388,12 @@ async function main(): Promise<void> {
   check(
     "every recorded quantity is a whole multiple of the pack size",
     chain !== undefined &&
-      [chain.approvedQuantity, chain.preparedQuantity, chain.shippedQuantity, chain.receivedQuantity]
+      [
+        chain.approvedQuantity,
+        chain.preparedQuantity,
+        chain.shippedQuantity,
+        chain.receivedQuantity,
+      ]
         .filter((value): value is number => value !== null)
         .every((value) => value % chain.vpeSnapshot === 0),
   );
@@ -346,8 +405,7 @@ async function main(): Promise<void> {
   });
   check(
     "only the shipped quantity moved, not the approved one",
-    partialMovements.length === 2 &&
-      partialMovements.every((row) => row.quantity === pack),
+    partialMovements.length === 2 && partialMovements.every((row) => row.quantity === pack),
     JSON.stringify(partialMovements),
   );
 
@@ -422,7 +480,9 @@ async function main(): Promise<void> {
   check("each recalculation left a history row", history.length > 0);
   check(
     "safetyStock <= min <= max holds",
-    history.every((row) => row.safetyStock <= row.minThreshold && row.minThreshold <= row.maxThreshold),
+    history.every(
+      (row) => row.safetyStock <= row.minThreshold && row.minThreshold <= row.maxThreshold,
+    ),
   );
 
   // The LTN1 manager's run is site-scoped, so it must not have touched the
@@ -475,19 +535,28 @@ async function main(): Promise<void> {
     snapshotsToday === trackedAtBoth,
     `(${String(snapshotsToday)} rows for ${String(trackedAtBoth)} articles)`,
   );
-  check("and reported what it appended", nightly.snapshotted >= 0,
-    `(${String(nightly.snapshotted)} appended)`);
+  check(
+    "and reported what it appended",
+    nightly.snapshotted >= 0,
+    `(${String(nightly.snapshotted)} appended)`,
+  );
 
   // Idempotent: the scheduler may retry, and a KPI that moves when nothing
   // happened is worse than one that is a day stale.
   const secondRun = await runNightlyMaintenance();
-  check("an immediate second run appends nothing", secondRun.snapshotted === 0,
-    `(${String(secondRun.snapshotted)})`);
+  check(
+    "an immediate second run appends nothing",
+    secondRun.snapshotted === 0,
+    `(${String(secondRun.snapshotted)})`,
+  );
   const stillOnePerArticle = await db.stockAlertSnapshot.count({
     where: { snapshotDate: todayUtc },
   });
-  check("and leaves exactly one row per article", stillOnePerArticle === trackedAtBoth,
-    `(${String(stillOnePerArticle)})`);
+  check(
+    "and leaves exactly one row per article",
+    stillOnePerArticle === trackedAtBoth,
+    `(${String(stillOnePerArticle)})`,
+  );
 
   // A movement that empties an article must reach the notification centre.
   const ltn1Site = await db.site.findFirstOrThrow({ where: { code: "LTN1" } });
@@ -515,8 +584,11 @@ async function main(): Promise<void> {
     orderBy: { createdAt: "desc" },
     select: { type: true, title: true },
   });
-  check("as a rupture rather than a generic alert", raised?.type === "STOCK_RUPTURE",
-    raised?.title ?? "none");
+  check(
+    "as a rupture rather than a generic alert",
+    raised?.type === "STOCK_RUPTURE",
+    raised?.title ?? "none",
+  );
 
   // A movement on an article that is *already* short must stay silent, or the
   // bell menu becomes something people mute. Small enough to leave the level
@@ -600,7 +672,11 @@ async function main(): Promise<void> {
   ]);
 
   const fulfilled = outcomes.filter((outcome) => outcome.status === "fulfilled").length;
-  check("exactly one of two simultaneous transitions applied", fulfilled === 1, `(${String(fulfilled)})`);
+  check(
+    "exactly one of two simultaneous transitions applied",
+    fulfilled === 1,
+    `(${String(fulfilled)})`,
+  );
 
   const submissions = await db.requestStatusHistory.count({
     where: { requestId: raceTarget.requestId, toStatus: "PENDING_APPROVAL" },
@@ -608,7 +684,10 @@ async function main(): Promise<void> {
   check("and it left exactly one history row", submissions === 1, `(${String(submissions)})`);
 
   const raceArticle = await db.stockItem.findFirstOrThrow({
-    where: { siteId: (await db.site.findFirstOrThrow({ where: { code: "LTN1" } })).id, currentStock: { gte: 500 } },
+    where: {
+      siteId: (await db.site.findFirstOrThrow({ where: { code: "LTN1" } })).id,
+      currentStock: { gte: 500 },
+    },
     select: { id: true, articleId: true, currentStock: true },
   });
 
@@ -633,8 +712,8 @@ async function main(): Promise<void> {
   );
 
   console.log("\nCSV CATALOGUE IMPORT (brief section 6.1)");
-  const importHeader = "reference,designation,vpe,leadTimeDays,abcClass,initialStock,siteCode";
-  const stamp = String(Date.now()).slice(-6);
+  const importHeader =
+    "reference,designation,unit,vpe,leadTimeDays,abcClass,initialStock,siteCode";
 
   const articlesBefore = await db.article.count();
 
@@ -642,11 +721,14 @@ async function main(): Promise<void> {
   const refusedImport = await admin.article.import({
     content:
       `${importHeader}\n` +
-      `SMOKE-${stamp}-A,Article valide,250,2,A,500,LTN1\n` +
-      `SMOKE-${stamp}-B,Article invalide,0,2,A,0,LTN1\n`,
+      `SMOKE-${stamp}-A,Article valide,PIECE,250,2,A,500,LTN1\n` +
+      `SMOKE-${stamp}-B,Article invalide,PIECE,0,2,A,0,LTN1\n`,
   });
-  check("a file with one bad row is refused whole", refusedImport.errors.length === 1 && refusedImport.imported === 0,
-    JSON.stringify(refusedImport.errors));
+  check(
+    "a file with one bad row is refused whole",
+    refusedImport.errors.length === 1 && refusedImport.imported === 0,
+    JSON.stringify(refusedImport.errors),
+  );
   check(
     "and nothing was written",
     (await db.article.count()) === articlesBefore,
@@ -656,21 +738,34 @@ async function main(): Promise<void> {
   const accepted = await admin.article.import({
     content:
       `${importHeader}\n` +
-      `SMOKE-${stamp}-A,Boitier importe,250,2,A,500,LTN1\n` +
-      `SMOKE-${stamp}-B,Cosse importee,100,3,C,0,LTN4\n`,
+      `SMOKE-${stamp}-A,Boitier importe,PIECE,250,2,A,500,LTN1\n` +
+      `SMOKE-${stamp}-B,Cosse importee,METRE,100,3,C,0,LTN4\n`,
   });
-  check("a valid file imports every row", accepted.imported === 2 && accepted.errors.length === 0,
-    JSON.stringify(accepted));
+  check(
+    "a valid file imports every row",
+    accepted.imported === 2 && accepted.errors.length === 0,
+    JSON.stringify(accepted),
+  );
 
   const importedArticle = await db.article.findUniqueOrThrow({
     where: { reference: `SMOKE-${stamp}-A` },
-    select: { id: true, vpe: true, stockItems: { select: { currentStock: true, site: { select: { code: true } } } } },
+    select: {
+      id: true,
+      vpe: true,
+      stockItems: { select: { currentStock: true, site: { select: { code: true } } } },
+    },
   });
   check("with a stock row at every plant", importedArticle.stockItems.length === 2);
   check(
     "and the opening quantity only at the plant the file named",
     importedArticle.stockItems.find((item) => item.site.code === "LTN1")?.currentStock === 500 &&
       importedArticle.stockItems.find((item) => item.site.code === "LTN4")?.currentStock === 0,
+  );
+
+  check(
+    "the unit came through the import and is not the default",
+    (await db.article.findUniqueOrThrow({ where: { reference: `SMOKE-${stamp}-B` } })).unit ===
+      "METRE",
   );
 
   const importTrail = await db.thresholdHistory.findFirst({
@@ -681,16 +776,26 @@ async function main(): Promise<void> {
 
   // Re-importing the same references updates rather than failing on the index.
   const reimported = await admin.article.import({
-    content: `${importHeader}\nSMOKE-${stamp}-A,Libelle corrige,500,4,B,999,LTN1\n`,
+    content: `${importHeader}\nSMOKE-${stamp}-A,Libelle corrige,PIECE,500,4,B,999,LTN1\n`,
   });
-  check("a re-import updates instead of refusing", reimported.updated === 1 && reimported.imported === 0,
-    JSON.stringify(reimported));
+  check(
+    "a re-import updates instead of refusing",
+    reimported.updated === 1 && reimported.imported === 0,
+    JSON.stringify(reimported),
+  );
 
   const afterReimport = await db.article.findUniqueOrThrow({
     where: { reference: `SMOKE-${stamp}-A` },
-    select: { designation: true, vpe: true, stockItems: { select: { currentStock: true, site: { select: { code: true } } } } },
+    select: {
+      designation: true,
+      vpe: true,
+      stockItems: { select: { currentStock: true, site: { select: { code: true } } } },
+    },
   });
-  check("master data was updated", afterReimport.designation === "Libelle corrige" && afterReimport.vpe === 500);
+  check(
+    "master data was updated",
+    afterReimport.designation === "Libelle corrige" && afterReimport.vpe === 500,
+  );
   check(
     "but the live stock level was not overwritten by an opening balance",
     afterReimport.stockItems.find((item) => item.site.code === "LTN1")?.currentStock === 500,
@@ -741,7 +846,10 @@ async function main(): Promise<void> {
   check("article created", article.reference === reference.toUpperCase(), article.reference);
 
   const articleDetail = await admin.article.byId({ articleId: article.articleId, siteId: ltn1Id });
-  check("article visible at the plant, so a stock row exists", articleDetail.reference === reference);
+  check(
+    "article visible at the plant, so a stock row exists",
+    articleDetail.reference === reference,
+  );
   check(
     "legacy comparison is returned for the detail page",
     articleDetail.legacyThresholds.min >= 0 && articleDetail.legacyThresholds.max >= 0,
@@ -750,6 +858,7 @@ async function main(): Promise<void> {
   await admin.article.update({
     articleId: article.articleId,
     designation: "Article de controle, renomme",
+    unit: "METRE",
     vpe: 250,
     leadTimeDays: 5,
     abcClass: "A",

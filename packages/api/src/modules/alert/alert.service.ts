@@ -59,10 +59,10 @@ async function loadParametersByClass(
       row === null
         ? defaultParametersForClass(abcClass)
         : {
-            safetyDays: row.safetyDays.toNumber(),
-            extraCoverageDays: row.extraCoverageDays.toNumber(),
+            safetyDays: row.safetyDays,
+            extraCoverageDays: row.extraCoverageDays,
             averagingWindowDays: row.averagingWindowDays,
-            warningMarginRatio: row.warningMarginRatio.toNumber(),
+            warningMarginRatio: row.warningMarginRatio,
           },
     ]),
   );
@@ -84,10 +84,10 @@ function parametersFor(
 
   if (override !== null) {
     return {
-      safetyDays: override.safetyDays.toNumber(),
-      extraCoverageDays: override.extraCoverageDays.toNumber(),
+      safetyDays: override.safetyDays,
+      extraCoverageDays: override.extraCoverageDays,
       averagingWindowDays: override.averagingWindowDays,
-      warningMarginRatio: override.warningMarginRatio.toNumber(),
+      warningMarginRatio: override.warningMarginRatio,
     };
   }
 
@@ -148,7 +148,6 @@ export async function board({
   };
 }
 
-
 export async function summary({
   actor,
   input,
@@ -205,9 +204,7 @@ export async function captureDailySnapshots({
   // Midnight UTC: the column is a `@db.Date`, and the unique index that makes
   // this idempotent is on (stockItemId, snapshotDate). A timestamp carrying the
   // hour the job happened to run would defeat it.
-  const snapshotDate = new Date(
-    Date.UTC(on.getUTCFullYear(), on.getUTCMonth(), on.getUTCDate()),
-  );
+  const snapshotDate = new Date(Date.UTC(on.getUTCFullYear(), on.getUTCMonth(), on.getUTCDate()));
 
   const written = await repository.appendAlertSnapshots(
     subjects.map((subject) => ({
@@ -217,11 +214,8 @@ export async function captureDailySnapshots({
       // would let the snapshot disagree with the board it summarises.
       level: subject.alertLevel,
       currentStock: subject.currentStock,
-      minThreshold: subject.minThreshold.toNumber(),
-      coverageDays: daysOfCoverage(
-        subject.currentStock,
-        subject.averageDailyConsumption.toNumber(),
-      ),
+      minThreshold: subject.minThreshold,
+      coverageDays: daysOfCoverage(subject.currentStock, subject.averageDailyConsumption),
       snapshotDate,
     })),
   );

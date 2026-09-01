@@ -30,7 +30,10 @@ export const averagingWindowSchema = z.union([
 export const updateParameterInputSchema = z.object({
   abcClass: abcClassSchema,
   safetyDays: z.number().min(0, "Le stock de securite ne peut pas etre negatif").max(60),
-  extraCoverageDays: z.number().min(0, "La couverture additionnelle ne peut pas etre negative").max(180),
+  extraCoverageDays: z
+    .number()
+    .min(0, "La couverture additionnelle ne peut pas etre negative")
+    .max(180),
   averagingWindowDays: averagingWindowSchema,
   warningMarginRatio: z
     .number()

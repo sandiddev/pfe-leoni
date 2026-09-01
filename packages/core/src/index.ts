@@ -25,6 +25,8 @@ export {
 } from "./shared/brand";
 export { clamp, roundThreshold, roundTo } from "./shared/rounding";
 export {
+  MEASUREMENT_UNITS,
+  type MeasurementUnit,
   MOVEMENT_TYPES,
   type MovementType,
   NOTIFICATION_TYPES,
@@ -62,12 +64,7 @@ export {
 export { CROSS_SITE_ROLES, type Role, ROLES, isCrossSiteRole, isRole } from "./access/role";
 
 // --- Stock -----------------------------------------------------------------
-export {
-  type FifoAllocation,
-  type FifoLot,
-  allocateFifo,
-  totalAvailable,
-} from "./stock/fifo";
+export { type FifoAllocation, type FifoLot, allocateFifo, totalAvailable } from "./stock/fifo";
 export {
   type ApplyMovementInputs,
   applyMovement,

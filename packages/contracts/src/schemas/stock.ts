@@ -62,6 +62,14 @@ export const recordMovementInputSchema = z.object({
   occurredAt: z.date().optional(),
   /** Delivery note, request code, or the ERP document this came from. */
   reference: z.string().trim().max(64).optional(),
+  /**
+   * Supplier batch, recorded on an inbound movement.
+   *
+   * Ignored on an outbound one: a batch is a property of stock arriving, and
+   * FIFO decides which batches leave.
+   */
+  batchReference: z.string().trim().max(64).optional(),
+  supplierReference: z.string().trim().max(120).optional(),
 });
 
 export type RecordMovementInput = z.infer<typeof recordMovementInputSchema>;

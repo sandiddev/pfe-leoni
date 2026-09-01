@@ -76,10 +76,10 @@ async function loadParametersByClass(
       row === null
         ? defaultParametersForClass(abcClass)
         : {
-            safetyDays: row.safetyDays.toNumber(),
-            extraCoverageDays: row.extraCoverageDays.toNumber(),
+            safetyDays: row.safetyDays,
+            extraCoverageDays: row.extraCoverageDays,
             averagingWindowDays: row.averagingWindowDays,
-            warningMarginRatio: row.warningMarginRatio.toNumber(),
+            warningMarginRatio: row.warningMarginRatio,
           },
     ]),
   );
@@ -101,10 +101,10 @@ function parametersFor(
 
   if (override !== null) {
     return {
-      safetyDays: override.safetyDays.toNumber(),
-      extraCoverageDays: override.extraCoverageDays.toNumber(),
+      safetyDays: override.safetyDays,
+      extraCoverageDays: override.extraCoverageDays,
       averagingWindowDays: override.averagingWindowDays,
-      warningMarginRatio: override.warningMarginRatio.toNumber(),
+      warningMarginRatio: override.warningMarginRatio,
     };
   }
 
@@ -260,6 +260,7 @@ export async function create({
   const data = {
     reference: input.reference,
     designation: input.designation,
+    unit: input.unit,
     vpe: input.vpe,
     leadTimeDays: input.leadTimeDays,
     abcClass: input.abcClass,
@@ -337,6 +338,7 @@ export async function update({
 
   const data = {
     designation: input.designation,
+    unit: input.unit,
     vpe: input.vpe,
     leadTimeDays: input.leadTimeDays,
     abcClass: input.abcClass,
@@ -542,6 +544,44 @@ function importAudit(inputs: {
   };
 }
 
+/** The master-data fields an import writes, shared by both branches. */
+type ImportedMaster = Pick<ArticleImportRow, "designation" | "unit" | "vpe" | "leadTimeDays" | "abcClass">;
+
+/**
+ * Creates one imported article, with its stock row at every plant.
+ *
+ * The stock rows are not optional, for the reason `createWithAudit` states:
+ * every screen reads `StockItem`, so an article without them exists in the
+ * database and nowhere in the interface. The opening quantity lands at the
+ * plant the file named; the others start empty.
+ */
+async function createImportedArticle(inputs: {
+  readonly actor: Actor;
+  readonly repository: ArticleRepository;
+  readonly row: ArticleImportRow;
+  readonly master: ImportedMaster;
+  readonly sites: readonly { readonly id: string }[];
+  readonly siteIdByCode: ReadonlyMap<string, string>;
+}): Promise<void> {
+  const { actor, repository, row, master, sites, siteIdByCode } = inputs;
+
+  await repository.createWithAudit({
+    articleId: crypto.randomUUID(),
+    data: { reference: row.reference, ...master },
+    stockItems: sites.map((site) => ({
+      siteId: site.id,
+      currentStock: site.id === siteIdByCode.get(row.siteCode) ? row.initialStock : 0,
+    })),
+    audit: importAudit({
+      actor,
+      entityId: row.reference,
+      action: "IMPORT_CREATE",
+      before: null,
+      after: { reference: row.reference, ...master },
+    }),
+  });
+}
+
 /**
  * Writes the validated rows, one audited transaction each.
  *
@@ -561,7 +601,6 @@ async function writeImportedArticles(inputs: {
 }): Promise<{ readonly imported: number; readonly updated: number }> {
   const { actor, repository, rows, siteIdByCode } = inputs;
 
-
   const existing = await repository.findByReferences(rows.map(({ row }) => row.reference));
   const byReference = new Map(existing.map((article) => [article.reference, article]));
 
@@ -573,31 +612,14 @@ async function writeImportedArticles(inputs: {
     const current = byReference.get(row.reference);
     const master = {
       designation: row.designation,
+      unit: row.unit,
       vpe: row.vpe,
       leadTimeDays: row.leadTimeDays,
       abcClass: row.abcClass,
     };
 
     if (current === undefined) {
-      await repository.createWithAudit({
-        articleId: crypto.randomUUID(),
-        data: { reference: row.reference, ...master },
-        // A stock row at every plant, for the reason `createWithAudit` states:
-        // every screen reads `StockItem`, so an article without them exists in
-        // the database and nowhere in the interface. The opening quantity lands
-        // at the plant the file named; the others start empty.
-        stockItems: sites.map((site) => ({
-          siteId: site.id,
-          currentStock: site.id === siteIdByCode.get(row.siteCode) ? row.initialStock : 0,
-        })),
-        audit: importAudit({
-          actor,
-          entityId: row.reference,
-          action: "IMPORT_CREATE",
-          before: null,
-          after: { reference: row.reference, ...master },
-        }),
-      });
+      await createImportedArticle({ actor, repository, row, master, sites, siteIdByCode });
       imported += 1;
       continue;
     }
@@ -616,6 +638,7 @@ async function writeImportedArticles(inputs: {
         action: "IMPORT_UPDATE",
         before: {
           designation: current.designation,
+          unit: current.unit,
           vpe: current.vpe,
           leadTimeDays: current.leadTimeDays,
           abcClass: current.abcClass,

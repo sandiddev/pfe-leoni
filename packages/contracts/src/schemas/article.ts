@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import type { MovementType, RecalculationTrigger } from "@leoni/core";
+import type { MeasurementUnit, MovementType, RecalculationTrigger } from "@leoni/core";
+import { MEASUREMENT_UNITS } from "@leoni/core";
 
 import {
   abcClassSchema,
@@ -64,6 +65,14 @@ export type ArticleByIdInput = z.infer<typeof articleByIdInputSchema>;
  * else about the article can be corrected later; a duplicated reference is two
  * bins nobody can tell apart.
  */
+/**
+ * How the article is counted.
+ *
+ * From `MEASUREMENT_UNITS` in the domain, so a value the database can store and
+ * the label maps cannot translate is impossible to submit.
+ */
+export const measurementUnitSchema = z.enum(MEASUREMENT_UNITS);
+
 export const createArticleInputSchema = z.object({
   reference: z
     .string()
@@ -72,6 +81,7 @@ export const createArticleInputSchema = z.object({
     .max(64, "Reference trop longue")
     .transform((value) => value.toUpperCase()),
   designation: z.string().trim().min(2, "Designation requise").max(200),
+  unit: measurementUnitSchema.default("PIECE"),
   vpe: positiveQuantitySchema,
   leadTimeDays: z
     .number()
@@ -89,6 +99,7 @@ export type CreateArticleInput = z.infer<typeof createArticleInputSchema>;
 export const updateArticleInputSchema = z.object({
   articleId: idSchema,
   designation: z.string().trim().min(2, "Designation requise").max(200),
+  unit: measurementUnitSchema,
   vpe: positiveQuantitySchema,
   leadTimeDays: z
     .number()
@@ -118,6 +129,7 @@ export interface ArticleListItem {
   readonly reference: string;
   readonly designation: string;
   readonly abcClass: "A" | "B" | "C";
+  readonly unit: MeasurementUnit;
   readonly vpe: number;
   readonly leadTimeDays: number;
   readonly isActive: boolean;
@@ -170,6 +182,9 @@ export interface StockLotItem {
   readonly quantity: number;
   readonly fifoDate: Date;
   readonly locationCode: string;
+  /** `null` for stock that predates batch capture, or that never had one. */
+  readonly batchReference: string | null;
+  readonly supplierReference: string | null;
 }
 
 /**
@@ -208,6 +223,7 @@ export interface ArticleDetail extends ArticleListItem {
 export const ARTICLE_IMPORT_COLUMNS = [
   "reference",
   "designation",
+  "unit",
   "vpe",
   "leadTimeDays",
   "abcClass",
@@ -221,6 +237,7 @@ export type ArticleImportColumn = (typeof ARTICLE_IMPORT_COLUMNS)[number];
 export const ARTICLE_IMPORT_HEADERS_FR: Readonly<Record<ArticleImportColumn, string>> = {
   reference: "Reference",
   designation: "Designation",
+  unit: "Unite",
   vpe: "VPE",
   leadTimeDays: "Delai (jours)",
   abcClass: "Classe ABC",
@@ -250,6 +267,11 @@ export const articleImportRowSchema = z.object({
     .max(64, "Reference trop longue")
     .transform((value) => value.toUpperCase()),
   designation: z.string().trim().min(2, "Designation requise").max(200),
+  unit: z
+    .string()
+    .trim()
+    .transform((value) => value.toUpperCase())
+    .pipe(measurementUnitSchema),
   vpe: csvIntegerSchema.refine((value) => value > 0, "La VPE doit etre superieure a zero"),
   leadTimeDays: csvIntegerSchema.refine((value) => value <= 365, "Delai irrealiste"),
   abcClass: z

@@ -118,10 +118,10 @@ export async function update({
         before === undefined
           ? null
           : auditPayload({
-              safetyDays: before.safetyDays.toNumber(),
-              extraCoverageDays: before.extraCoverageDays.toNumber(),
+              safetyDays: before.safetyDays,
+              extraCoverageDays: before.extraCoverageDays,
               averagingWindowDays: before.averagingWindowDays,
-              warningMarginRatio: before.warningMarginRatio.toNumber(),
+              warningMarginRatio: before.warningMarginRatio,
             }),
       after: auditPayload(data),
       actorId: actor.userId,
@@ -182,20 +182,27 @@ type RecalculationTarget = Awaited<
   ReturnType<ParameterRepository["findRecalculationTargets"]>
 >[number];
 
-/** A parameter row as Prisma returns it, with its Decimal columns. */
+/**
+ * A parameter row as the repository hands it over.
+ *
+ * Plain numbers. This used to be a structural type of Prisma's `Decimal` — four
+ * `{ toNumber: () => number }` fields — which put a persistence detail in the
+ * layer CLAUDE.md section 3 keeps free of one, and forced every service test to
+ * build fixtures with the Prisma runtime.
+ */
 interface StoredParameters {
-  readonly safetyDays: { toNumber: () => number };
-  readonly extraCoverageDays: { toNumber: () => number };
+  readonly safetyDays: number;
+  readonly extraCoverageDays: number;
   readonly averagingWindowDays: number;
-  readonly warningMarginRatio: { toNumber: () => number };
+  readonly warningMarginRatio: number;
 }
 
 function toClassParameters(row: StoredParameters): ClassParameters {
   return {
-    safetyDays: row.safetyDays.toNumber(),
-    extraCoverageDays: row.extraCoverageDays.toNumber(),
+    safetyDays: row.safetyDays,
+    extraCoverageDays: row.extraCoverageDays,
     averagingWindowDays: row.averagingWindowDays,
-    warningMarginRatio: row.warningMarginRatio.toNumber(),
+    warningMarginRatio: row.warningMarginRatio,
   };
 }
 
@@ -272,9 +279,9 @@ function computeWrite(inputs: ComputeInputs): ThresholdWrite {
 /** Whether the run actually moved anything, so the screen can report honestly. */
 function hasChanged(target: RecalculationTarget, write: ThresholdWrite): boolean {
   return (
-    target.minThreshold.toNumber() !== write.minThreshold ||
-    target.maxThreshold.toNumber() !== write.maxThreshold ||
-    target.safetyStock.toNumber() !== write.safetyStock ||
+    target.minThreshold !== write.minThreshold ||
+    target.maxThreshold !== write.maxThreshold ||
+    target.safetyStock !== write.safetyStock ||
     target.alertLevel !== write.alertLevel
   );
 }
@@ -464,8 +471,7 @@ export async function forArticle({
   }
 
   const byClass = await parametersByClass(repository);
-  const fallback =
-    byClass.get(article.abcClass) ?? defaultParametersForClass(article.abcClass);
+  const fallback = byClass.get(article.abcClass) ?? defaultParametersForClass(article.abcClass);
 
   return {
     articleId: input.articleId,

@@ -1,9 +1,12 @@
+import { z } from "zod";
+
 import {
   attachmentListInputSchema,
   commentRequestInputSchema,
   createRequestInputSchema,
   deleteAttachmentInputSchema,
   deleteDraftInputSchema,
+  idSchema,
   recordAttachmentInputSchema,
   requestByIdInputSchema,
   requestListInputSchema,
@@ -79,6 +82,17 @@ export const requestRouter = createTRPCRouter({
      * produced by the route handler, and a fabricated one points at nothing.
      * The download route resolves the path itself and never trusts the client.
      */
+    /**
+     * Asked by the upload route before it writes a byte to disk.
+     *
+     * A query, because it changes nothing: it answers "may this caller attach to
+     * this request" so the route can refuse a stranger before the volume is
+     * touched, rather than after.
+     */
+    canUpload: permissionProcedure("request:comment")
+      .input(z.object({ requestId: idSchema }))
+      .query(async ({ ctx, input }) => service.assertCanAttach({ actor: ctx.actor, input })),
+
     record: permissionProcedure("request:comment")
       .input(recordAttachmentInputSchema)
       .mutation(async ({ ctx, input }) => service.recordAttachment({ actor: ctx.actor, input })),

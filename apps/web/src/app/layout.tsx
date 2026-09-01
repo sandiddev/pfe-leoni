@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import type { ReactNode } from "react";
 
 import { Toaster, TooltipProvider } from "@leoni/ui";
@@ -36,14 +37,19 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({ children }: { readonly children: ReactNode }) {
+export default async function RootLayout({ children }: { readonly children: ReactNode }) {
+  // Minted by the middleware for this request's Content-Security-Policy. Read
+  // here rather than passed down, because the inline theme script is the only
+  // thing that needs it and it must sit in <head>.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
+
   return (
     // The interface is French (brief section 6.2). Declaring it on <html> is
     // what makes screen readers pronounce it correctly and browsers offer the
     // right spellcheck dictionary.
     <html lang="fr" suppressHydrationWarning>
       <head>
-        <ThemeScript />
+        <ThemeScript nonce={nonce} />
       </head>
       <body className="min-h-dvh bg-background text-foreground antialiased">
         {/* Keyboard users reach the content without tabbing the whole sidebar.

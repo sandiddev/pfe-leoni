@@ -21,6 +21,7 @@ export type { PrismaClient } from "./generated/prisma/client";
 export {
   AbcClass,
   AlertLevel,
+  MeasurementUnit,
   MovementType,
   NotificationType,
   RecalculationTrigger,

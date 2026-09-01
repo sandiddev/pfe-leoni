@@ -45,6 +45,8 @@ export function MovementDialog({
   const [quantity, setQuantity] = useState("");
   const [locationId, setLocationId] = useState("");
   const [reference, setReference] = useState("");
+  const [batchReference, setBatchReference] = useState("");
+  const [supplierReference, setSupplierReference] = useState("");
   const [reason, setReason] = useState("");
 
   const articles = useQuery(
@@ -116,6 +118,8 @@ export function MovementDialog({
       quantity: parsedQuantity,
       ...(locationId === "" ? {} : { storageLocationId: locationId }),
       ...(reference === "" ? {} : { reference }),
+      ...(batchReference === "" ? {} : { batchReference }),
+      ...(supplierReference === "" ? {} : { supplierReference }),
     });
   };
 
@@ -229,6 +233,36 @@ export function MovementDialog({
                 </option>
               ))}
             </Select>
+          </div>
+        )}
+
+        {/* Only on an inbound movement. A batch is a property of stock
+            arriving; on an exit FIFO decides which batches leave, so asking
+            here would invite a picker to name a lot they did not draw from. */}
+        {mode === "move" && INBOUND.includes(type) && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="movement-batch">Lot fournisseur</Label>
+              <Input
+                id="movement-batch"
+                placeholder="LOT-2026-014"
+                value={batchReference}
+                onChange={(event) => {
+                  setBatchReference(event.target.value);
+                }}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="movement-supplier">Fournisseur</Label>
+              <Input
+                id="movement-supplier"
+                placeholder="TE Connectivity"
+                value={supplierReference}
+                onChange={(event) => {
+                  setSupplierReference(event.target.value);
+                }}
+              />
+            </div>
           </div>
         )}
 

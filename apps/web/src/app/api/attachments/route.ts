@@ -16,8 +16,16 @@ import { api } from "~/trpc/server";
  * `request.attachments.record`, which runs the same site check as every other
  * read of that request.
  *
- * Order matters. The file is written first and the row second: an orphaned
- * file is a cleanup job, an orphaned row is a download link that 404s.
+ * Order matters, and it used to be the wrong way round. The file was written
+ * first and the row second, reasoning that an orphaned file is a cleanup job
+ * while an orphaned row is a download link that 404s. True for correctness —
+ * and it made disk-filling reachable by anyone holding a session, because
+ * `proxy.ts` deliberately does not cover `/api` and the only thing in the way
+ * was a 10 MB cap on each request.
+ *
+ * So rights are checked first, against the API, before a byte reaches the
+ * volume. The orphan window is unchanged: if `record` still fails after the
+ * write, the file is left behind, which remains the harmless direction.
  */
 
 /** A name safe to put on a filesystem, whatever the browser sent. */
@@ -49,8 +57,21 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   if (file.size > MAX_ATTACHMENT_BYTES) {
     return NextResponse.json(
-      { message: `Fichier trop volumineux (maximum ${String(MAX_ATTACHMENT_BYTES / 1024 / 1024)} Mo).` },
+      {
+        message: `Fichier trop volumineux (maximum ${String(MAX_ATTACHMENT_BYTES / 1024 / 1024)} Mo).`,
+      },
       { status: 413 },
+    );
+  }
+
+  // Before anything is written. A caller with no rights on this request gets
+  // nothing on the disk, not a file plus an apology.
+  try {
+    await api.request.attachments.canUpload({ requestId });
+  } catch {
+    return NextResponse.json(
+      { message: "Enregistrement refuse : verifiez vos droits sur cette demande." },
+      { status: 403 },
     );
   }
 
@@ -62,8 +83,6 @@ export async function POST(request: Request): Promise<NextResponse> {
   await writeFile(path.join(directory, storedName), Buffer.from(await file.arrayBuffer()));
 
   try {
-    // The API decides whether this caller may attach to this request. A
-    // refusal here leaves the file behind, which is the harmless direction.
     const result = await api.request.attachments.record({
       requestId,
       fileName: file.name.slice(0, 255),
